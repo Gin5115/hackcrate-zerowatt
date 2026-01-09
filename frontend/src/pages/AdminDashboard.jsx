@@ -7,6 +7,7 @@ function AdminDashboard() {
 
     // --- Shared State ---
     const [savedTests, setSavedTests] = useState([]);
+    const [candidates, setCandidates] = useState([]);
 
     // --- Generator State ---
     const [role, setRole] = useState("");
@@ -15,10 +16,11 @@ function AdminDashboard() {
     const [genLoading, setGenLoading] = useState(false);
 
     // --- Analytics State ---
-    const [candidates, setCandidates] = useState([]);
     const [filters, setFilters] = useState({ university: '', search: '' });
+    const [selectedCandidate, setSelectedCandidate] = useState(null); // For detailed view
 
     // --- DB Manager State ---
+    const [managerMode, setManagerMode] = useState('assessments'); // 'assessments' or 'candidates'
     const [selectedTestId, setSelectedTestId] = useState(null);
     const [editingTest, setEditingTest] = useState(null);
 
@@ -29,7 +31,7 @@ function AdminDashboard() {
             return;
         }
         fetchAssessments();
-        if (activeTab === 'analytics') fetchAnalytics();
+        if (activeTab === 'analytics' || activeTab === 'manager') fetchCandidates();
     }, [activeTab]);
 
     const fetchAssessments = () => {
@@ -39,7 +41,7 @@ function AdminDashboard() {
             .catch(err => console.error(err));
     };
 
-    const fetchAnalytics = () => {
+    const fetchCandidates = () => {
         fetch("http://localhost:8000/candidates")
             .then(res => res.json())
             .then(data => setCandidates(data))
@@ -73,15 +75,14 @@ function AdminDashboard() {
     });
 
     // --- DB MANAGER LOGIC ---
+    // Assessment Management
     const handleEditSelect = async (id) => {
         setSelectedTestId(id);
         try {
             const response = await fetch(`http://localhost:8000/assessments/${id}`);
             const data = await response.json();
             setEditingTest(data);
-        } catch (err) {
-            console.error(err);
-        }
+        } catch (err) { console.error(err); }
     };
 
     const handleSaveChanges = async () => {
@@ -95,26 +96,29 @@ function AdminDashboard() {
             if (response.ok) {
                 alert("Changes Saved");
                 fetchAssessments();
-            } else {
-                alert("Failed to save changes.");
-            }
-        } catch (err) {
-            console.error(err);
-            alert("Error saving.");
-        }
+            } else alert("Failed to save changes.");
+        } catch (err) { console.error(err); alert("Error saving."); }
     };
 
-    const handleDelete = async (id, e) => {
+    const handleDeleteAssessment = async (id, e) => {
         if (e) e.stopPropagation();
         if (!window.confirm("Delete this assessment?")) return;
         try {
             await fetch(`http://localhost:8000/assessments/${id}`, { method: 'DELETE' });
             fetchAssessments();
-            if (selectedTestId === id) {
-                setSelectedTestId(null);
-                setEditingTest(null);
-            }
+            if (selectedTestId === id) { setSelectedTestId(null); setEditingTest(null); }
         } catch (err) { alert("Failed to delete"); }
+    };
+
+    // Candidate Management
+    const handleDeleteCandidate = async (id) => {
+        if (!window.confirm("PERMANENTLY DELETE this candidate? This cannot be undone.")) return;
+        try {
+            await fetch(`http://localhost:8000/candidate/${id}`, { method: 'DELETE' });
+            fetchCandidates();
+            if (selectedCandidate && selectedCandidate.id === id) setSelectedCandidate(null);
+            alert("Candidate Deleted.");
+        } catch (err) { console.error(err); alert("Failed to delete candidate."); }
     };
 
     const handleLogout = () => {
@@ -135,24 +139,15 @@ function AdminDashboard() {
                 </div>
 
                 <div className="flex space-x-4 border-b border-gray-200 dark:border-gray-700">
-                    <button
-                        onClick={() => setActiveTab('generator')}
-                        className={`pb-3 px-4 font-medium transition-colors ${activeTab === 'generator' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
-                    >
-                        Generator
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('analytics')}
-                        className={`pb-3 px-4 font-medium transition-colors ${activeTab === 'analytics' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
-                    >
-                        Analytics
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('manager')}
-                        className={`pb-3 px-4 font-medium transition-colors ${activeTab === 'manager' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
-                    >
-                        DB Manager
-                    </button>
+                    {['generator', 'analytics', 'manager'].map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`pb-3 px-4 font-medium capitalize transition-colors ${activeTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
+                        >
+                            {tab === 'manager' ? 'DB Manager' : tab}
+                        </button>
+                    ))}
                 </div>
             </div>
 
@@ -175,16 +170,6 @@ function AdminDashboard() {
                             <button onClick={handleGenerate} disabled={genLoading} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors">
                                 {genLoading ? "Generating..." : "Generate & Save"}
                             </button>
-                        </div>
-
-                        <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-2">Recently Saved</h3>
-                        <div className="space-y-2 pr-2">
-                            {savedTests.map(t => (
-                                <div key={t.id} className="p-3 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded shadow-sm text-sm flex justify-between items-center text-gray-800 dark:text-gray-200">
-                                    <span>{t.role_title}</span>
-                                    <span className="text-xs text-gray-400">#{t.id}</span>
-                                </div>
-                            ))}
                         </div>
                     </div>
 
@@ -233,124 +218,192 @@ function AdminDashboard() {
                             <thead className="bg-gray-50 dark:bg-gray-900 border-b dark:border-gray-700">
                                 <tr>
                                     <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Candidate</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">University</th>
                                     <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Role</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Score</th>
+                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Stage</th>
+                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">ATS Score</th>
+                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Final Score</th>
                                     <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                 {filteredCandidates.map(c => (
-                                    <tr key={c.submission_id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                                    <tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                         <td className="p-4">
                                             <div className="font-bold text-gray-900 dark:text-gray-100">{c.name}</div>
                                             <div className="text-xs text-gray-500">{c.email}</div>
+                                            <div className="text-xs text-gray-400">{c.university}</div>
                                         </td>
-                                        <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{c.university}</td>
                                         <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{c.role}</td>
-                                        <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">{c.score}</td>
+                                        <td className="p-4 text-sm font-mono">{c.current_stage}</td>
+                                        <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">{c.ats_score}</td>
+                                        <td className="p-4 font-mono font-bold text-purple-600 dark:text-purple-400">{c.final_score}</td>
                                         <td className="p-4">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${c.status === 'Pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                            <span className={`px-2 py-1 rounded text-xs font-bold ${c.status === 'Completed' ? 'bg-green-100 text-green-700' :
+                                                    c.status === 'Disqualified' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                                }`}>
                                                 {c.status}
                                             </span>
+                                        </td>
+                                        <td className="p-4">
+                                            <button
+                                                onClick={() => setSelectedCandidate(c)}
+                                                className="text-xs bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 py-1 rounded transition-colors"
+                                            >
+                                                View Details
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
                                 {filteredCandidates.length === 0 && (
-                                    <tr><td colSpan="5" className="p-8 text-center text-gray-400">No candidates found</td></tr>
+                                    <tr><td colSpan="7" className="p-8 text-center text-gray-400">No candidates found</td></tr>
                                 )}
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Candidate Details Modal */}
+                    {selectedCandidate && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+                            <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl relative">
+                                <button onClick={() => setSelectedCandidate(null)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 text-xl font-bold">&times;</button>
+                                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{selectedCandidate.name}</h2>
+                                <p className="text-gray-500 dark:text-gray-400 mb-6">{selectedCandidate.email} • {selectedCandidate.university}</p>
+
+                                <div className="space-y-6">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                                            <h3 className="text-sm font-bold text-gray-500 uppercase">Role</h3>
+                                            <p className="text-lg font-bold dark:text-white">{selectedCandidate.role}</p>
+                                        </div>
+                                        <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                                            <h3 className="text-sm font-bold text-gray-500 uppercase">Status</h3>
+                                            <p className="text-lg font-bold dark:text-white">{selectedCandidate.status}</p>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h3 className="font-bold text-lg dark:text-white mb-3">Performance Data</h3>
+                                        <pre className="bg-gray-100 dark:bg-gray-900 p-4 rounded-lg text-sm overflow-x-auto text-gray-800 dark:text-gray-300">
+                                            {JSON.stringify(selectedCandidate.stage_scores, null, 2)}
+                                        </pre>
+                                    </div>
+
+                                    <div className="flex justify-end pt-4">
+                                        <button onClick={() => handleDeleteCandidate(selectedCandidate.id)} className="bg-red-600 text-white px-4 py-2 rounded font-bold hover:bg-red-700">Delete Candidate</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
             {/* TAB CONTENT: DB MANAGER */}
             {activeTab === 'manager' && (
-                <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-1 bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-4">
-                        <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-4">Select Assessment to Edit</h3>
-                        <div className="space-y-2">
-                            {savedTests.map(t => (
-                                <div key={t.id} onClick={() => handleEditSelect(t.id)}
-                                    className={`p-3 border rounded cursor-pointer transition-colors flex justify-between items-center ${selectedTestId === t.id ? 'bg-purple-50 border-purple-500 dark:bg-purple-900 dark:border-purple-400' : 'bg-gray-50 dark:bg-gray-700 dark:border-gray-600 hover:bg-gray-100'}`}>
-                                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{t.role_title}</span>
-                                    <button onClick={(e) => handleDelete(t.id, e)} className="text-gray-400 hover:text-red-500 px-2">Delete</button>
-                                </div>
-                            ))}
-                        </div>
+                <div className="max-w-7xl mx-auto">
+                    <div className="flex space-x-2 mb-6 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg w-max">
+                        <button
+                            onClick={() => setManagerMode('assessments')}
+                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${managerMode === 'assessments' ? 'bg-white dark:bg-gray-700 shadow text-purple-600' : 'text-gray-500'}`}
+                        >
+                            Assessments
+                        </button>
+                        <button
+                            onClick={() => setManagerMode('candidates')}
+                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${managerMode === 'candidates' ? 'bg-white dark:bg-gray-700 shadow text-purple-600' : 'text-gray-500'}`}
+                        >
+                            Candidates
+                        </button>
                     </div>
 
-                    <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
-                        {!editingTest ? (
-                            <div className="h-full flex flex-col items-center justify-center text-gray-400"><p>Select an assessment to edit database records</p></div>
-                        ) : (
-                            <div className="space-y-6">
-                                <div className="flex justify-between items-center">
-                                    <h2 className="text-xl font-bold dark:text-white">Editing: {editingTest.role}</h2>
-                                    <button onClick={handleSaveChanges} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 shadow-md">Save Changes</button>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Role Title</label>
-                                    <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                        value={editingTest.role} onChange={e => setEditingTest({ ...editingTest, role: e.target.value })} />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Questions Schema (JSON)</label>
-                                    <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border dark:border-gray-600 space-y-4">
-                                        {editingTest.questions.map((q, idx) => (
-                                            <div key={idx} className="bg-white dark:bg-gray-800 p-4 rounded border dark:border-gray-700 shadow-sm relative group">
-                                                <span className="absolute top-2 right-2 text-xs font-mono text-gray-400">ID: {q.id}</span>
-                                                <div className="grid grid-cols-2 gap-4 mb-2">
-                                                    <div>
-                                                        <label className="text-xs text-gray-500">Type</label>
-                                                        <select className="w-full text-sm border rounded p-1 dark:bg-gray-700 dark:text-white"
-                                                            value={q.type}
-                                                            onChange={e => {
-                                                                const newQs = [...editingTest.questions];
-                                                                newQs[idx].type = e.target.value;
-                                                                setEditingTest({ ...editingTest, questions: newQs });
-                                                            }}>
-                                                            <option value="code">Code</option>
-                                                            <option value="subjective">Subjective</option>
-                                                            <option value="mcq">MCQ</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="text-xs text-gray-500">Difficulty</label>
-                                                        <select className="w-full text-sm border rounded p-1 dark:bg-gray-700 dark:text-white"
-                                                            value={q.difficulty}
-                                                            onChange={e => {
-                                                                const newQs = [...editingTest.questions];
-                                                                newQs[idx].difficulty = e.target.value;
-                                                                setEditingTest({ ...editingTest, questions: newQs });
-                                                            }}>
-                                                            <option value="easy">Easy</option>
-                                                            <option value="medium">Medium</option>
-                                                            <option value="hard">Hard</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-gray-500">Question Text</label>
-                                                    <textarea className="w-full text-sm p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600" rows={3}
-                                                        value={q.text}
-                                                        onChange={e => {
-                                                            const newQs = [...editingTest.questions];
-                                                            newQs[idx].text = e.target.value;
-                                                            setEditingTest({ ...editingTest, questions: newQs });
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
+                    {managerMode === 'assessments' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            <div className="lg:col-span-1 bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-4">
+                                <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-4">Select Assessment</h3>
+                                <div className="space-y-2">
+                                    {savedTests.map(t => (
+                                        <div key={t.id} onClick={() => handleEditSelect(t.id)}
+                                            className={`p-3 border rounded cursor-pointer transition-colors flex justify-between items-center ${selectedTestId === t.id ? 'bg-purple-50 border-purple-500 dark:bg-purple-900 dark:border-purple-400' : 'bg-gray-50 dark:bg-gray-700 dark:border-gray-600 hover:bg-gray-100'}`}>
+                                            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{t.role_title}</span>
+                                            <button onClick={(e) => handleDeleteAssessment(t.id, e)} className="text-gray-400 hover:text-red-500 px-2">Delete</button>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-                        )}
-                    </div>
+
+                            <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
+                                {!editingTest ? (
+                                    <div className="h-full flex flex-col items-center justify-center text-gray-400"><p>Select assessment to edit</p></div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="flex justify-between items-center">
+                                            <h2 className="text-xl font-bold dark:text-white">Editing: {editingTest.role}</h2>
+                                            <button onClick={handleSaveChanges} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 shadow-md">Save Changes</button>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Role Title</label>
+                                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                value={editingTest.role} onChange={e => setEditingTest({ ...editingTest, role: e.target.value })} />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Questions Schema (JSON)</label>
+                                            <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border dark:border-gray-600 space-y-4">
+                                                {editingTest.questions.map((q, idx) => (
+                                                    <div key={idx} className="bg-white dark:bg-gray-800 p-4 rounded border dark:border-gray-700 shadow-sm relative group">
+                                                        <span className="absolute top-2 right-2 text-xs font-mono text-gray-400">ID: {q.id}</span>
+                                                        <div className="mb-2">
+                                                            <label className="text-xs text-gray-500">Question Text</label>
+                                                            <textarea className="w-full text-sm p-2 border rounded dark:bg-gray-700 dark:text-white dark:border-gray-600" rows={2}
+                                                                value={q.text}
+                                                                onChange={e => {
+                                                                    const newQs = [...editingTest.questions];
+                                                                    newQs[idx].text = e.target.value;
+                                                                    setEditingTest({ ...editingTest, questions: newQs });
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {managerMode === 'candidates' && (
+                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 overflow-hidden">
+                            <table className="w-full text-left">
+                                <thead className="bg-gray-100 dark:bg-gray-900 border-b dark:border-gray-700">
+                                    <tr>
+                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">ID</th>
+                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Name</th>
+                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Email</th>
+                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Role</th>
+                                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                    {candidates.map(c => (
+                                        <tr key={c.id}>
+                                            <td className="p-4 font-mono text-xs">{c.id}</td>
+                                            <td className="p-4 text-gray-900 dark:text-white font-medium">{c.name}</td>
+                                            <td className="p-4 text-gray-500">{c.email}</td>
+                                            <td className="p-4 text-gray-500">{c.role}</td>
+                                            <td className="p-4">
+                                                <button onClick={() => handleDeleteCandidate(c.id)} className="text-red-600 hover:text-red-800 font-bold text-xs border border-red-200 px-3 py-1 rounded">Delete</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {candidates.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-400">No candidates found</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

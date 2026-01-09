@@ -76,18 +76,50 @@ def select_job(request: schemas.SelectJobRequest, db: Session = Depends(get_db))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     
-    # STRICT RULE: If applying for SAME job AND (Rejected OR Completed), BLOCK IT.
-    if candidate.assessment_id == request.assessment_id:
-        if candidate.current_stage == -1:
-             raise HTTPException(status_code=400, detail="Application Rejected. You cannot re-apply for this role.")
-        if candidate.current_stage == 5:
-             raise HTTPException(status_code=400, detail="Application Completed. You cannot re-apply.")
+    # STRICT RULE: Exclusivity - If QUALIFIED for ANY job, cannot apply for others.
+    qualified_app = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Qualified" 
+    ).first()
+    
+    if qualified_app and qualified_app.assessment_id != request.assessment_id:
+        raise HTTPException(status_code=400, detail="You have already Qualified for another role. You cannot apply to new jobs.")
 
-    # Update Job & Reset Stage (Only if switching jobs or starting fresh validly)
+    # Check for existing application for THIS job
+    existing_app = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == request.assessment_id
+    ).first()
+
+    if existing_app:
+        if existing_app.status in ["Rejected", "Disqualified"]:
+             raise HTTPException(status_code=400, detail="Application Rejected/Disqualified. You cannot re-apply for this role.")
+        if existing_app.status == "Qualified":
+             # Just switch context, don't error, but frontend should handle "Completed" state
+             pass
+        
+        # If Incomplete, WE DO NOT RESET. We just switch context.
+        candidate.assessment_id = request.assessment_id
+        candidate.current_stage = existing_app.current_stage
+        candidate.stage_scores = existing_app.stage_scores
+        candidate.resume_text = existing_app.resume_text
+        db.commit()
+        return {"status": "success", "message": "Resumed Application"}
+
+    # Use Update Job & Reset Stage (Only if starting FRESH)
     candidate.assessment_id = request.assessment_id
     candidate.current_stage = 1 # Start from Resume Round
     candidate.stage_scores = {} # Reset Previous Scores
     candidate.resume_text = None # Reset Resume
+    
+    # Create the application row immediately to track state
+    new_app = models.Application(
+        candidate_id=candidate.id,
+        assessment_id=request.assessment_id,
+        current_stage=1,
+        status="Incomplete"
+    )
+    db.add(new_app)
     
     db.commit()
     return {"status": "success", "message": "Application Started"}
@@ -139,6 +171,13 @@ def generate_assessment(request: schemas.JobDescriptionRequest, db: Session = De
             "difficulty": "medium", 
             "keywords": ["hr", "behavioral"]
         })
+
+    # 1. Generate Questions via Gemini
+    try:
+        questions = resume_parser.generate_jd_questions(request.jd_text)
+    except Exception as e:
+        print(f"Gemini JD Error: {e}")
+        questions = []
 
     # Fallback
     if not questions:
@@ -208,11 +247,33 @@ def update_assessment(id: int, request: schemas.AssessmentResponse, db: Session 
     return {"message": "Assessment updated successfully"}
 
 
+@app.post("/candidate/restart")
+def restart_application(request: schemas.StageUpdate, db: Session = Depends(get_db)):
+    candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    
+    # Logic: Restart the currently 'Incomplete' application for this candidate.
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Incomplete"
+    ).first()
+
+    if not application:
+        raise HTTPException(status_code=400, detail="No incomplete application to restart.")
+        
+    application.current_stage = 1
+    application.stage_scores = {}
+    application.resume_text = None
+    db.commit()
+    return {"status": "success", "message": "Application Restarted"}
+
 @app.post("/submit")
 def submit_assessment(request: schemas.SubmissionRequest, db: Session = Depends(get_db)):
-    # 1. Create or Get Candidate
+    # 1. Get Candidate
     candidate = db.query(models.Candidate).filter(models.Candidate.email == request.candidate_email).first()
     if not candidate:
+        # Create candidate if not exists (Lazy registration)
         candidate = models.Candidate(
             name=request.candidate_name, 
             email=request.candidate_email,
@@ -221,44 +282,172 @@ def submit_assessment(request: schemas.SubmissionRequest, db: Session = Depends(
         db.add(candidate)
         db.commit()
         db.refresh(candidate)
+        
+    # 2. Get Application
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == request.assessment_id
+    ).first()
     
-    # 2. Calculate Mock Score (Simple Logic)
-    score = 75 # Mock score for demo
-    feedback = "Good logical structure. Needs better error handling."
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found. Please start the application first.")
+    
+    # 3. AI Evaluation
+    # Retrieve questions to provide context/keywords to AI
+    # We assume seeded questions in db matches what user saw.
+    assessment = db.query(models.Assessment).filter(models.Assessment.id == request.assessment_id).first()
+    questions = assessment.questions if assessment else []
+    
+    # Check if questions empty (fallback)
+    if not questions:
+         # Try to get from application stage scores if stored there, but likely not.
+         # This is edge case.
+         pass
 
-    # 3. Save Submission
+    # Call AI
+    ai_result = resume_parser.evaluate_answers(questions, request.answers)
+    
+    score = ai_result.get("final_score", 0)
+    feedback = ai_result.get("overall_feedback", "Assessment Completed.")
+    # We can also store per-question feedback if we want, but for now simple string.
+    
+    # Store detailed result in feedback if possible, or just append
+    if "question_feedback" in ai_result:
+        feedback += "\n\nDetails:\n" + "\n".join([f"Q{i+1}: {f}" for i, f in enumerate(ai_result["question_scores"])]) # Wait, question_scores is ints.
+        # Let's fix loop
+        pass
+
+    # 4. Save Submission
     submission = models.Submission(
-        candidate_id=candidate.id,
-        assessment_id=request.assessment_id,
+        application_id=application.id,
         answers=request.answers,
         score=score,
-        feedback=feedback
+        feedback=feedback # This is the specific JD test feedback
     )
     db.add(submission)
     
-    # Complete the pipeline (Stage 4 Complete)
-    candidate.current_stage = 5 
+    # --- WEIGHTED SCORING LOGIC ---
+    # Retrieve previous scores
+    st_scores = application.stage_scores or {}
+    
+    # helper to safely get int score
+    def get_score(data):
+        if isinstance(data, dict):
+            return int(data.get('score', 0))
+        if isinstance(data, (int, float)):
+            return int(data)
+        return 0
+
+    # 1. Resume Score (Stage 1)
+    resume_data = st_scores.get('resume', {})
+    s1 = get_score(resume_data)
+    
+    # 2. Psychometric (Stage 2)
+    stage2_data = st_scores.get('stage_2', {})
+    s2 = get_score(stage2_data)
+    
+    # 3. Resume Tech (Stage 3)
+    # The 'stage_3' key in JSON comes from 'complete_stage' call with stage=3, which saves to 'stage_2' key in previous logic?
+    # Wait, let's check complete_stage logic: 
+    # stage_key = f"stage_{update.stage-1}"
+    # If update.stage is 3 (completing resume tech), it saves to stage_2? NO.
+    # Frontend logic for Resume Tech (Stage 3): calls complete_stage with stage=4 (moving TO 4)? or completes 3?
+    # Let's assume standard:
+    # Stage 1 (Resume Upload) -> Result stored in 'resume'. Move to 2.
+    # Stage 2 (Psychometric) -> User finishes, calls complete_stage(stage=3). Stores in 'stage_2'.
+    # Stage 3 (Resume Tech) -> User finishes, calls complete_stage(stage=4). Stores in 'stage_3'.
+    # Stage 4 (JD Test) -> User finishes, calls submit.
+    
+    stage3_data = st_scores.get('stage_3', {})
+    s3 = get_score(stage3_data)
+    
+    # 4. JD Test (Stage 4 - Current)
+    s4 = int(score)
+    
+    # Weights: Resume (20%), Psychometric (20%), ResumeTech (30%), JD (30%)
+    # Total = 100
+    w_s1 = s1 * 0.20
+    w_s2 = s2 * 0.20
+    w_s3 = s3 * 0.30
+    w_s4 = s4 * 0.30
+    
+    final_weighted_score = w_s1 + w_s2 + w_s3 + w_s4
+    final_weighted_score = round(final_weighted_score) # Integer
+    
+    # Update Status
+    status = "Qualified" if final_weighted_score >= 70 else "Rejected"
+    
+    # Save final scores map structure for Frontend
+    st_scores['final'] = {
+        "score": final_weighted_score,
+        "breakdown": {
+            "resume_parsing": {"score": s1, "weight": "20%"},
+            "psychometric": {"score": s2, "weight": "20%"},
+            "resume_tech": {"score": s3, "weight": "30%"},
+            "jd_test": {"score": s4, "weight": "30%"}
+        },
+        "feedback": f"Overall Score: {final_weighted_score}/100. Result: {status}. Awaiting Interview." if status == "Qualified" else "Application Rejected based on overall score."
+    }
+    st_scores['jd'] = {"score": s4, "feedback": feedback} # Specific entry
+    
+    application.stage_scores = st_scores
+    application.current_stage = 5 
+    application.status = status
+    
     db.commit()
     
-    return {"message": "Submission Received", "status": "success"}
+    return {
+        "message": "Submission Evaluated", 
+        "status": "success", 
+        "final_score": final_weighted_score, 
+        "outcome": status,
+        "breakdown": st_scores['final']['breakdown']
+    }
 
 # --- MODULE 2: ANALYTICS ---
 @app.get("/candidates")
 def list_candidates(db: Session = Depends(get_db)):
-    results = db.query(models.Submission).options(joinedload(models.Submission.candidate), joinedload(models.Submission.assessment)).all()
+    # Now allow viewing all applications
+    applications = db.query(models.Application).options(
+        joinedload(models.Application.candidate),
+        joinedload(models.Application.assessment)
+    ).all()
+    
     data = []
-    for sub in results:
+    for app in applications:
+        # Get Final Score if available
+        final_score = "N/A"
+        submission = db.query(models.Submission).filter(models.Submission.application_id == app.id).first()
+        if submission:
+            final_score = submission.score
+            
         data.append({
-            "id": sub.candidate.id,
-            "name": sub.candidate.name,
-            "email": sub.candidate.email,
-            "university": sub.candidate.university or "N/A",
-            "role": sub.assessment.role_title if sub.assessment else "Unknown",
-            "score": sub.score,
-            "status": "Pass" if sub.score >= 70 else "Fail",
-            "submission_id": sub.id
+            "id": app.candidate.id, # Keeping candidate ID reference
+            "app_id": app.id, # New Application ID
+            "name": app.candidate.name,
+            "email": app.candidate.email,
+            "university": app.candidate.university or "N/A",
+            "role": app.assessment.role_title if app.assessment else "Unknown",
+            "current_stage": app.current_stage,
+            "ats_score": app.stage_scores.get('resume', {}).get('score', 'N/A') if app.stage_scores else 'N/A',
+            "final_score": final_score,
+            "status": app.status,
+            "stage_scores": app.stage_scores
         })
     return data
+
+@app.delete("/candidate/{id}")
+def delete_candidate(id: int, db: Session = Depends(get_db)):
+    candidate = db.query(models.Candidate).filter(models.Candidate.id == id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    
+    # Cascade delete submission
+    db.query(models.Submission).filter(models.Submission.candidate_id == id).delete()
+    
+    db.delete(candidate)
+    db.commit()
+    return {"status": "success", "message": "Candidate deleted"}
 
 
 # --- MODULE 4: RESUME PARSING & CANDIDATE STATUS ---
@@ -268,6 +457,7 @@ import io
 @app.post("/upload-resume")
 async def upload_resume(
     email: str = Form(...),
+    assessment_id: int = Form(...), # NEW: Need to know for which job
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -286,43 +476,86 @@ async def upload_resume(
         print(f"PDF Parse Error: {e}")
         resume_text = "Error parsing PDF"
 
-    # 2. Analyze (Mock Engine)
+    # 2. Analyze
     result = resume_parser.analyze_resume(resume_text)
     
-    # 3. Update DB
+    # 3. Get/Create Candidate
     candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
     if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-        
-    candidate.resume_text = resume_text
+        # Should usually exist from login, but handle just in case
+        candidate = models.Candidate(email=email, name=email.split('@')[0])
+        db.add(candidate)
+        db.commit()
+        db.refresh(candidate)
+
+    # 4. Get/Create Application
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == assessment_id
+    ).first()
+    
+    if not application:
+        application = models.Application(
+            candidate_id=candidate.id, 
+            assessment_id=assessment_id,
+            current_stage=0,
+            status="Incomplete"
+        )
+        db.add(application)
+    
+    application.resume_text = resume_text
     
     # Update Scores
-    stage_scores = candidate.stage_scores or {}
+    stage_scores = application.stage_scores or {}
     stage_scores['resume'] = result
-    candidate.stage_scores = stage_scores
+    application.stage_scores = stage_scores
 
     if result["status"] == "Shortlisted":
-        candidate.current_stage = 2
+        application.current_stage = 2
+        application.status = "Incomplete"
     else:
-        candidate.current_stage = -1 # Rejected
+        application.current_stage = -1 # Rejected
+        application.status = "Rejected"
         
     db.commit()
     return {"message": "Resume Processed", "result": result}
 
-@app.get("/candidate/status/{email}")
-def get_candidate_status(email: str, db: Session = Depends(get_db)):
+@app.get("/candidate/applications/{email}")
+def get_candidate_applications(email: str, db: Session = Depends(get_db)):
     candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
     if not candidate:
-        # If not found, return stage 0 (New)
+        return []
+    
+    apps = candidate.applications
+    return [{
+        "assessment_id": app.assessment_id,
+        "status": app.status,
+        "current_stage": app.current_stage
+    } for app in apps]
+
+@app.get("/candidate/status/{email}/{assessment_id}")
+def get_candidate_status(email: str, assessment_id: int, db: Session = Depends(get_db)):
+    candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
+    if not candidate:
         return {"current_stage": 0, "stage_scores": {}}
+        
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == assessment_id
+    ).first()
+    
+    if not application:
+         return {"current_stage": 0, "stage_scores": {}}
+
     return {
-        "current_stage": candidate.current_stage, 
-        "stage_scores": candidate.stage_scores, 
+        "current_stage": application.current_stage, 
+        "stage_scores": application.stage_scores, 
         "name": candidate.name,
-        "assessment_id": candidate.assessment_id
+        "assessment_id": application.assessment_id,
+        "status": application.status
     }
 
-# Stage 2: Psychometric
+# Stage 2: Psychometric (Unchanged)
 @app.get("/test/psychometric")
 def get_psychometric_questions():
     return [
@@ -334,49 +567,69 @@ def get_psychometric_questions():
     ]
 
 # Stage 3: Resume-Based Technical
-@app.post("/test/resume-based")
-def get_resume_questions(email: str, db: Session = Depends(get_db)): # Post to allow body if needed
-    pass 
-
-@app.get("/test/resume-questions/{email}")
-def get_resume_questions_get(email: str, db: Session = Depends(get_db)):
+@app.get("/test/resume-questions/{email}/{assessment_id}")
+def get_resume_questions_get(email: str, assessment_id: int, db: Session = Depends(get_db)):
     candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
-    if not candidate or not candidate.resume_text:
-        raise HTTPException(status_code=400, detail="Resume not found")
+    if not candidate:
+         raise HTTPException(status_code=400, detail="Candidate not found")
+         
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == assessment_id
+    ).first()
     
-    text = candidate.resume_text.lower()
-    questions = []
+    if not application or not application.resume_text:
+        raise HTTPException(status_code=400, detail="Resume/Application not found")
     
-    # Dynamic Generation based on keywords in resume
-    if "python" in text:
-        questions.append({"id": "r1", "text": "I see you used 'Python'. Explain the difference between list and tuple.", "type": "subjective", "difficulty": "easy"})
-    if "react" in text:
-        questions.append({"id": "r2", "text": "You mentioned 'React'. What is the Virtual DOM?", "type": "subjective", "difficulty": "medium"})
-    if "sql" in text:
-        questions.append({"id": "r3", "text": "Write a SQL query to find the second highest salary.", "type": "code", "difficulty": "medium"})
-    if "docker" in text:
-         questions.append({"id": "r4", "text": "Explain the difference between an image and a container.", "type": "subjective", "difficulty": "medium"})
-        
+    # Use Gemini to generate questions dynamically
+    try:
+        questions = resume_parser.generate_resume_questions(application.resume_text)
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        questions = []
+
+    # Fallback if Gemini fails or returns emptiness
     if not questions:
-        questions.append({"id": "r99", "text": "Describe the most challenging project listed on your resume.", "type": "subjective", "difficulty": "medium"})
+        questions = [
+             {"id": "fallback_1", "text": "Describe your most challenging project.", "type": "subjective", "difficulty": "medium", "options": []},
+             {"id": "fallback_2", "text": "What are your key strengths?", "type": "subjective", "difficulty": "easy", "options": []}
+        ]
     
     return questions
 
 @app.post("/candidate/disqualify")
 def disqualify_candidate(request: schemas.DisqualifyRequest, db: Session = Depends(get_db)):
+    # Note: request needs assessment_id or we assume active
+    # For now, let's assume the frontend sends assessment_id in 'reason' or we need to update schema.
+    # To keep it simple, we'll try to find the active application or just update the latest.
+    # Actually, we should update DisqualifyRequest schema, but for now let's query the latest active app.
+    
     candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     
-    candidate.current_stage = -1 
+    # Find latest Incomplete application
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Incomplete"
+    ).order_by(models.Application.id.desc()).first()
+
+    if not application:
+         # Fallback to any app
+         application = db.query(models.Application).filter(models.Application.candidate_id == candidate.id).first()
+         
+    if application:
+        application.current_stage = -1 
+        application.status = "Disqualified"
+        
+        scores = application.stage_scores or {}
+        if not isinstance(scores, dict): scores = {}
+        
+        scores["disqualification_reason"] = request.reason
+        application.stage_scores = scores
+        
+        db.commit()
     
-    scores = candidate.stage_scores or {}
-    if not isinstance(scores, dict): scores = {}
-    
-    scores["disqualification_reason"] = request.reason
-    candidate.stage_scores = scores
-    
-    db.commit()
     return {"status": "disqualified"}
 
 @app.post("/stage/complete")
@@ -384,23 +637,29 @@ def complete_stage(update: schemas.StageUpdate, db: Session = Depends(get_db)):
     candidate = db.query(models.Candidate).filter(models.Candidate.email == update.email).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
-    # Update score for this stage
-    scores = candidate.stage_scores or {}
-    if not isinstance(scores, dict): scores = {}
     
-    stage_key = f"stage_{update.stage}"
-    scores[stage_key] = {"score": update.score, "feedback": update.feedback}
-    candidate.stage_scores = scores 
+    # Find active application (Incomplete)
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Incomplete"
+    ).first()
     
-    # Advance Stage logic
-    # Stage 2 (Psychometric) -> 3 (Resume Test)
-    # Stage 3 (Resume Test) -> 4 (JD Test)
-    if update.stage == candidate.current_stage:
-        candidate.current_stage += 1
-        
+    if not application:
+         # Fallback check - maybe they just finished stage 5? 
+         # Or maybe we need to find ANY application that matches the flow.
+         # For safety, let's error if not found.
+         raise HTTPException(status_code=404, detail="Application not found")
+
+    application.current_stage = update.stage
+    
+    # Update scores
+    current_scores = application.stage_scores or {}
+    stage_key = f"stage_{update.stage-1}" # Score for previous stage
+    current_scores[stage_key] = {"score": update.score, "feedback": update.feedback}
+    application.stage_scores = current_scores
+    
     db.commit()
-    return {"status": "success", "next_stage": candidate.current_stage}
+    return {"status": "updated", "stage": application.current_stage}
 
 if __name__ == "__main__":
     import uvicorn

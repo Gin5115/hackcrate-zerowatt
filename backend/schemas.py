@@ -48,11 +48,11 @@ class DisqualifyRequest(BaseModel):
 # --- Response Schemas ---
 
 class QuestionSchema(BaseModel):
-    id: int
+    id: Any
     text: str
     type: str  # "code", "mcq", "subjective"
     difficulty: str # "easy", "medium", "hard"
-    keywords: List[str]
+    keywords: List[str] = []
 
 class AssessmentResponse(BaseModel):
     role: str

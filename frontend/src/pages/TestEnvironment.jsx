@@ -20,7 +20,10 @@ function TestEnvironment() {
         // 1. Fetch Questions based on Type
         let url = "";
         if (testType === 'psychometric') url = "http://localhost:8000/test/psychometric";
-        else if (testType === 'resume_test') url = `http://localhost:8000/test/resume-questions/${candidateEmail}`;
+        else if (testType === 'resume_test') {
+            const id = localStorage.getItem("assessment_id");
+            url = `http://localhost:8000/test/resume-questions/${candidateEmail}/${id}`;
+        }
         else {
             const id = localStorage.getItem("assessment_id");
             if (id) url = `http://localhost:8000/assessments/${id}`;
@@ -30,11 +33,17 @@ function TestEnvironment() {
             fetch(url)
                 .then(res => res.json())
                 .then(data => {
-                    const qs = data.questions || data; // Handle different response structures
-                    setQuestions(qs);
+                    console.log("Fetched Test Data:", data); // DEBUG log
+                    const qs = data.questions || data;
+                    if (!Array.isArray(qs)) {
+                        console.error("Expected array or object with questions property, got:", data);
+                        setQuestions([]);
+                    } else {
+                        setQuestions(qs);
+                    }
                     setLoading(false);
                 })
-                .catch(err => { console.error(err); setLoading(false); });
+                .catch(err => { console.error("Fetch Error:", err); setLoading(false); });
         }
 
         // 2. Proctoring Event Listeners
@@ -117,8 +126,8 @@ function TestEnvironment() {
             navigate('/success');
         } else {
             // Intermediate Stage Completion
-            let currentStageId = 2;
-            if (testType === 'resume_test') currentStageId = 3;
+            let nextStageId = 3; // Psychometric assumes moving to Stage 3
+            if (testType === 'resume_test') nextStageId = 4; // Resume Test moves to Stage 4
 
             // Calculate a mock score for this stage
             const score = Math.floor(Math.random() * 30) + 70; // Mock score 70-100
@@ -128,7 +137,7 @@ function TestEnvironment() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     email: candidateEmail,
-                    stage: currentStageId,
+                    stage: nextStageId,
                     score: score,
                     feedback: "Stage Completed Successfully."
                 }),
@@ -188,7 +197,7 @@ function TestEnvironment() {
                 <div className="flex-1 bg-[#1e1e1e] flex flex-col relative">
                     {q.type === 'mcq' ? (
                         <div className="p-10 space-y-4">
-                            {q.options.map(opt => (
+                            {q.options && Array.isArray(q.options) ? q.options.map(opt => (
                                 <label key={opt} className="flex items-center gap-3 p-4 bg-[#252526] rounded-lg border border-[#333] cursor-pointer hover:bg-[#2d2d2d] transition-colors">
                                     <input type="radio" name={`q-${q.id}`} className="w-5 h-5 accent-blue-500"
                                         checked={answers[activeQuestion] === opt}
@@ -196,7 +205,7 @@ function TestEnvironment() {
                                     />
                                     <span className="text-gray-200 text-lg">{opt}</span>
                                 </label>
-                            ))}
+                            )) : <div className="text-red-400">Error: options missing for this MCQ.</div>}
                         </div>
                     ) : q.type === 'code' ? (
                         <Editor height="100%" defaultLanguage="python" theme="vs-dark"
@@ -211,10 +220,32 @@ function TestEnvironment() {
                         />
                     )}
 
-                    <div className="absolute bottom-4 right-6">
-                        <button onClick={handleSubmit} className="px-6 py-3 bg-[#007acc] text-white rounded font-bold hover:bg-[#0063a5] shadow-lg">
-                            {testType === 'jd_test' ? 'Submit Final Assessment' : 'Complete Stage'}
+                    <div className="absolute bottom-4 right-6 flex gap-3">
+                        {/* Prev Button */}
+                        <button
+                            onClick={() => setActiveQuestion(prev => Math.max(0, prev - 1))}
+                            disabled={activeQuestion === 0}
+                            className={`px-4 py-2 rounded font-bold transition-colors ${activeQuestion === 0 ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-[#3c3c3c] hover:bg-[#4a4a4a] text-white'}`}
+                        >
+                            Previous
                         </button>
+
+                        {/* Next Button */}
+                        {activeQuestion < questions.length - 1 && (
+                            <button
+                                onClick={() => setActiveQuestion(prev => Math.min(questions.length - 1, prev + 1))}
+                                className="px-6 py-3 bg-[#007acc] text-white rounded font-bold hover:bg-[#0063a5] shadow-lg"
+                            >
+                                Next
+                            </button>
+                        )}
+
+                        {/* Submit Button - Only on Last Question */}
+                        {activeQuestion === questions.length - 1 && (
+                            <button onClick={handleSubmit} className="px-6 py-3 bg-green-600 text-white rounded font-bold hover:bg-green-700 shadow-lg">
+                                {testType === 'jd_test' ? 'Submit Assessment' : 'Complete Stage'}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

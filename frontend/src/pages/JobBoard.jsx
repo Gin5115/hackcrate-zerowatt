@@ -41,25 +41,55 @@ function JobBoard() {
     };
 
     const fetchStatus = () => {
-        return fetch(`http://localhost:8000/candidate/status/${candidateEmail}`)
+        // Fetch ALL applications to determine global status
+        return fetch(`http://localhost:8000/candidate/applications/${candidateEmail}`)
             .then(res => res.json())
-            .then(data => setStatusData(data))
+            .then(data => {
+                // data is list of { assessment_id, status, current_stage }
+                setStatusData(data);
+            })
             .catch(err => console.error(err));
     };
 
     const getJobStatus = (jobId) => {
-        if (!statusData || (statusData.assessment_id !== jobId && statusData.assessment_id !== null)) return "Not Applied";
+        if (!statusData) return "Not Applied";
+        // data is array
+        const app = Array.isArray(statusData) ? statusData.find(a => a.assessment_id === jobId) : null;
+        if (!app) return "Not Applied";
 
-        if (!statusData.assessment_id) return "Not Applied";
-        if (statusData.assessment_id !== jobId) return "Not Applied";
+        if (app.status === "Qualified") return "Qualified";
+        if (app.status === "Rejected") return "Rejected";
+        if (app.status === "Disqualified") return "Disqualified";
+        if (app.status === "Hired") return "Hired";
 
-        if (statusData.current_stage === -1) return "Disqualified";
-        if (statusData.current_stage === 5) return "Qualified";
+        // For Incomplete
+        if (app.current_stage === -1) return "Disqualified"; // fallback legacy
         return "In Progress";
     };
 
+    const isAnyQualified = () => {
+        if (!statusData || !Array.isArray(statusData)) return false;
+        return statusData.some(a => a.status === "Qualified" || a.status === "Hired");
+    }
+
     const handleApply = async (jobId, jobRole) => {
-        if (!window.confirm(`Start application for ${jobRole}? This will reset any progress on other applications.`)) return;
+        // Validation handled by backend mainly, but rapid feedback here
+        if (isAnyQualified()) {
+            alert("You have already Qualified for a position. You cannot apply for more.");
+            return;
+        }
+
+        const app = Array.isArray(statusData) ? statusData.find(a => a.assessment_id === jobId) : null;
+        if (app && (app.status === "Rejected" || app.status === "Disqualified")) {
+            alert("You have been rejected for this role. You cannot re-apply.");
+            return;
+        }
+
+        const confirmMsg = app
+            ? `Resume application for ${jobRole}?`
+            : `Start application for ${jobRole}?`;
+
+        if (!window.confirm(confirmMsg)) return;
 
         try {
             const response = await fetch("http://localhost:8000/candidate/select-job", {
@@ -127,9 +157,9 @@ function JobBoard() {
                             <div className="mt-auto flex flex-col gap-4">
                                 <div className="flex items-center justify-between">
                                     <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${getJobStatus(job.id) === "Qualified" ? "bg-green-100 text-green-800" :
-                                            getJobStatus(job.id) === "Disqualified" ? "bg-red-100 text-red-800" :
-                                                getJobStatus(job.id) === "In Progress" ? "bg-blue-100 text-blue-800" :
-                                                    "bg-gray-100 text-gray-800"
+                                        getJobStatus(job.id) === "Disqualified" ? "bg-red-100 text-red-800" :
+                                            getJobStatus(job.id) === "In Progress" ? "bg-blue-100 text-blue-800" :
+                                                "bg-gray-100 text-gray-800"
                                         }`}>
                                         {getJobStatus(job.id)}
                                     </span>
@@ -142,7 +172,8 @@ function JobBoard() {
                                 >
                                     {getJobStatus(job.id) === "Not Applied" ? "Apply Now" :
                                         getJobStatus(job.id) === "Qualified" ? "Completed" :
-                                            getJobStatus(job.id) === "Disqualified" ? "Disqualified" : "Continue Application"}
+                                            getJobStatus(job.id) === "Rejected" ? "Rejected" :
+                                                getJobStatus(job.id) === "Disqualified" ? "Disqualified" : "Continue Application"}
                                 </button>
                             </div>
                         </div>

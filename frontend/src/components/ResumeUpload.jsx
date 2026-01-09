@@ -17,6 +17,7 @@ function ResumeUpload({ onComplete }) {
         setLoading(true);
         const formData = new FormData();
         formData.append("email", email);
+        formData.append("assessment_id", localStorage.getItem("assessment_id"));
         formData.append("file", file);
 
         try {
