@@ -4,7 +4,7 @@ from google.api_core.exceptions import TooManyRequests
 import re
 
 # Configure Gemini
-genai.configure(api_key="AIzaSyBks-iOUbK0Xolgnsxdg1_FSEnhVOEx97Y")
+genai.configure(api_key="AIzaSyB3BVgmbMqmjGgBafGw6S6RLbArVWjvIc4")
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 def analyze_resume(text: str) -> dict:

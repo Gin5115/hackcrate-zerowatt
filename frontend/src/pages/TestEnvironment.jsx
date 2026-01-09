@@ -8,6 +8,7 @@ function TestEnvironment() {
     const [answers, setAnswers] = useState({});
     const [questions, setQuestions] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [isDisqualifying, setIsDisqualifying] = useState(false);
 
     // Proctoring State
     const [tabSwitches, setTabSwitches] = useState(0);
@@ -50,12 +51,11 @@ function TestEnvironment() {
         const handleVisibilityChange = () => {
             if (document.hidden) {
                 setTabSwitches(prev => {
+                    // Stop incrementing if already at max or disqualifying
+                    if (prev >= 3 || isDisqualifying) return prev;
+
                     const newVal = prev + 1;
-                    if (newVal >= 3) {
-                        // 3rd Strike: Disqualify
-                        handleDisqualification();
-                        return newVal;
-                    } else {
+                    if (newVal < 3) {
                         alert(`⚠️ WARNING: Tab switching is monitored. Strike ${newVal}/3.`);
                     }
                     return newVal;
@@ -78,7 +78,14 @@ function TestEnvironment() {
             document.removeEventListener("visibilitychange", handleVisibilityChange);
             window.removeEventListener('popstate', handlePopState);
         };
-    }, []);
+    }, [isDisqualifying]);
+
+    // Effect to monitor strikes and trigger disqualification
+    useEffect(() => {
+        if (tabSwitches >= 3 && !isDisqualifying) {
+            handleDisqualification();
+        }
+    }, [tabSwitches, isDisqualifying]);
 
     const enterFullscreen = () => {
         const elem = document.documentElement;
@@ -86,22 +93,35 @@ function TestEnvironment() {
     };
 
     const handleDisqualification = async () => {
-        alert("maximum strikes reach pls contact the admin/hr");
-        // Note: We could add a backend endpoint to explicitly set status=-1 (Disqualified) here.
-        // For now, we reuse the completion endpoint but with a Failing Score (-1) or similar specific flag if we had one.
-        // Let's just fail this stage with 0 score.
-        await fetch("http://localhost:8000/candidate/disqualify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: candidateEmail,
-                reason: "reached max strikes contact support or admin or hr"
-            }),
-        });
+        if (isDisqualifying) return;
+        setIsDisqualifying(true);
 
+        // Force exit fullscreen immediately
         if (document.fullscreenElement) {
             document.exitFullscreen().catch(err => console.log(err));
         }
+
+        alert("⛔ PROCTORING VIOLATION: Maximum strikes reached (3/3).\n\nYou have been DISQUALIFIED from this application. You cannot retake this test.");
+
+        const assessId = parseInt(localStorage.getItem("assessment_id")) || 0;
+        console.log("SENDING DISQUALIFY REQUEST:", { email: candidateEmail, assessment_id: assessId });
+
+        try {
+            const res = await fetch("http://localhost:8000/candidate/disqualify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: candidateEmail,
+                    assessment_id: assessId,
+                    reason: "Proctoring Violation: Tab Switching Limit Reached (3 Strikes)"
+                }),
+            });
+            const data = await res.json();
+            console.log("DISQUALIFY RESPONSE:", data);
+        } catch (e) {
+            console.error("DISQUALIFY ERROR:", e);
+        }
+
         navigate('/candidate/application');
     };
 

@@ -71,52 +71,69 @@ function CandidateDashboard() {
     if (loading) return <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">Loading Profile...</div>;
 
     const currentStage = status.current_stage || 1; // Default to 1 (Resume)
+    const isDisqualified = status.status === "Rejected" || status.status === "Disqualified" || currentStage === -1;
 
     // Stage Renderers
-    const renderStageCard = (level, title, description, isActive, isLocked, isCompleted, type) => (
-        <div className={`relative p-6 rounded-xl border-2 transition-all duration-300 ${isActive ? 'bg-white dark:bg-gray-800 border-purple-500 shadow-xl scale-105 z-10' :
-            isCompleted ? 'bg-green-50 dark:bg-gray-900 border-green-500 opacity-80' :
-                'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 opacity-50 grayscale'
-            }`}>
-            <div className="flex justify-between items-start mb-4">
-                <span className={`text-xs font-bold uppercase px-2 py-1 rounded ${isActive ? 'bg-purple-100 text-purple-700' :
-                    isCompleted ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
-                    }`}>
-                    Level {level}
-                </span>
-                {isCompleted && <span className="text-green-500 text-xl font-bold">Done</span>}
-                {isLocked && <span className="text-gray-400 text-xl font-bold">Locked</span>}
-            </div>
+    const renderStageCard = (level, title, description, isActive, isLocked, isCompleted, type) => {
+        // Extract score if completed
+        let score = null;
+        if (isCompleted && status.stage_scores) {
+            const key = level === 1 ? 'resume' : `stage_${level}`;
+            const scoreData = status.stage_scores[key];
+            // Handle different score formats (int vs dict)
+            if (scoreData) {
+                score = typeof scoreData === 'object' ? scoreData.score : scoreData;
+            }
+            // For logic mapping:
+            // Stage 1 (Resume) -> stored in 'resume' key likely, or stage_1
+        }
 
-            <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-2">{title}</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">{description}</p>
-
-            {isActive && level === 1 && (
-                <div className="text-purple-600 font-bold text-sm">Action Required Below</div>
-            )}
-
-            {isActive && level > 1 && (
-                <div className="space-y-3">
-                    <button
-                        onClick={() => handleStartTest(type)}
-                        className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 transition-colors shadow-lg animate-pulse"
-                    >
-                        Start Test
-                    </button>
-
+        return (
+            <div className={`relative p-6 rounded-xl border-2 transition-all duration-300 ${isActive ? 'bg-white dark:bg-gray-800 border-purple-500 shadow-xl scale-105 z-10' :
+                isCompleted ? 'bg-green-50 dark:bg-gray-900 border-green-500 opacity-80' :
+                    'bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-700 opacity-50 grayscale'
+                }`}>
+                <div className="flex justify-between items-start mb-4">
+                    <span className={`text-xs font-bold uppercase px-2 py-1 rounded ${isActive ? 'bg-purple-100 text-purple-700' :
+                        isCompleted ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
+                        }`}>
+                        Level {level}
+                    </span>
+                    {isCompleted && <span className="text-green-600 text-sm font-bold bg-green-100 px-2 py-1 rounded">Score: {score || 0}</span>}
+                    {isLocked && !isDisqualified && <span className="text-gray-400 text-xl font-bold">Locked</span>}
+                    {isDisqualified && !isCompleted && <span className="text-red-500 font-bold border border-red-500 px-2 py-1 rounded text-xs">DISQUALIFIED</span>}
                 </div>
-            )}
 
-            {isCompleted && status.stage_scores && (
-                <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <div className="text-xs font-bold text-gray-500 uppercase">Feedback</div>
-                    <div className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                        {status.stage_scores[`stage_${level}`]?.feedback || status.stage_scores['resume']?.feedback || "Completed"}
+                <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-2">{title}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">{description}</p>
+
+                {isActive && level === 1 && (
+                    <div className="text-purple-600 font-bold text-sm">Action Required Below</div>
+                )}
+
+                {isActive && level > 1 && (
+                    <div className="space-y-3">
+                        <button
+                            onClick={() => handleStartTest(type)}
+                            className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 transition-colors shadow-lg animate-pulse"
+                        >
+                            Start Test
+                        </button>
+
                     </div>
-                </div>
-            )}
-        </div>
-    );
+                )}
+
+                {isCompleted && status.stage_scores && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <div className="text-xs font-bold text-gray-500 uppercase">Feedback</div>
+                        <div className="text-sm text-gray-700 dark:text-gray-300 mt-1">
+                            {status.stage_scores[`stage_${level}`]?.feedback || status.stage_scores['resume']?.feedback || "Completed"}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-sans transition-colors duration-200 p-8">
@@ -125,12 +142,15 @@ function CandidateDashboard() {
                     <div>
                         <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">Your Application Pipeline</h1>
                         <p className="text-gray-600 dark:text-gray-400">Complete all stages for this role.</p>
-                        <button
-                            onClick={() => navigate('/candidate/dashboard')}
-                            className="mt-2 text-sm text-purple-600 hover:text-purple-800 font-bold underline"
-                        >
-                            ← Switch Role / Back to Jobs
-                        </button>
+                        {/* Hide Back Button if Disqualified/Rejected to enforce exit */}
+                        {!(status?.status === "Rejected" || status?.status === "Disqualified") && (
+                            <button
+                                onClick={() => navigate('/candidate/dashboard')}
+                                className="mt-2 text-sm text-purple-600 hover:text-purple-800 font-bold underline"
+                            >
+                                ← Switch Role / Back to Jobs
+                            </button>
+                        )}
                     </div>
                     <button
                         onClick={() => {
@@ -145,10 +165,29 @@ function CandidateDashboard() {
 
                 {/* Progress Pipeline */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
-                    {renderStageCard(1, "Resume Screening", "AI Analysis of your fit.", currentStage === 1, currentStage < 1, currentStage > 1, 'resume_upload')}
-                    {renderStageCard(2, "Psychometric", "Personality & Aptitude Check.", currentStage === 2, currentStage < 2, currentStage > 2, 'psychometric')}
-                    {renderStageCard(3, "Resume Technical", "Questions involved in your Resume.", currentStage === 3, currentStage < 3, currentStage > 3, 'resume_test')}
-                    {renderStageCard(4, "Final Assessment", "Core Skills based on JD.", currentStage === 4, currentStage < 4, currentStage > 4, 'jd_test')}
+                    {renderStageCard(1, "Resume Screening", "AI Analysis of your fit.",
+                        !isDisqualified && currentStage === 1,
+                        isDisqualified || currentStage < 1,
+                        currentStage > 1,
+                        'resume_upload')}
+
+                    {renderStageCard(2, "Psychometric", "Personality & Aptitude Check.",
+                        !isDisqualified && currentStage === 2,
+                        isDisqualified || currentStage < 2,
+                        currentStage > 2,
+                        'psychometric')}
+
+                    {renderStageCard(3, "Resume Technical", "Questions involved in your Resume.",
+                        !isDisqualified && currentStage === 3,
+                        isDisqualified || currentStage < 3,
+                        currentStage > 3,
+                        'resume_test')}
+
+                    {renderStageCard(4, "Final Assessment", "Core Skills based on JD.",
+                        !isDisqualified && currentStage === 4,
+                        isDisqualified || currentStage < 4,
+                        currentStage > 4,
+                        'jd_test')}
                 </div>
 
                 <div className="animate-fade-in-up">

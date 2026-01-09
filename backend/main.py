@@ -85,6 +85,25 @@ def select_job(request: schemas.SelectJobRequest, db: Session = Depends(get_db))
     if qualified_app and qualified_app.assessment_id != request.assessment_id:
         raise HTTPException(status_code=400, detail="You have already Qualified for another role. You cannot apply to new jobs.")
 
+    # SINGLE ACTIVE JOB RULE:
+    # If starting a NEW job (or resuming one), we must ensure no OTHER incomplete jobs are "In Progress".
+    # Logic:
+    # 1. Getting existing app for THIS job.
+    # 2. Getting ALL other active apps.
+    # 3. If resetting/starting fresh, we might need to clear others.
+    
+    # Let's simple rule: If we are selecting a job, we DELETE any OTHER "Incomplete" (In Progress) applications.
+    # This enforces that at any point, only ONE "Incomplete" application exists (the current one).
+    
+    other_incomplete = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Incomplete",
+        models.Application.assessment_id != request.assessment_id
+    ).all()
+    
+    for other in other_incomplete:
+        db.delete(other) # Resetting/Deleting other in-progress assignments
+    
     # Check for existing application for THIS job
     existing_app = db.query(models.Application).filter(
         models.Application.candidate_id == candidate.id,
@@ -104,7 +123,7 @@ def select_job(request: schemas.SelectJobRequest, db: Session = Depends(get_db))
         candidate.stage_scores = existing_app.stage_scores
         candidate.resume_text = existing_app.resume_text
         db.commit()
-        return {"status": "success", "message": "Resumed Application"}
+        return {"status": "success", "message": "Resumed Application. Other active applications have been reset."}
 
     # Use Update Job & Reset Stage (Only if starting FRESH)
     candidate.assessment_id = request.assessment_id
@@ -120,25 +139,15 @@ def select_job(request: schemas.SelectJobRequest, db: Session = Depends(get_db))
         status="Incomplete"
     )
     db.add(new_app)
+    # db.commit() will happen at end of route ideally, but we do it here
+    db.commit()
+    return {"status": "success", "message": "Application Started. Other active applications have been reset."}
+    db.add(new_app)
     
     db.commit()
     return {"status": "success", "message": "Application Started"}
 
-@app.post("/candidate/disqualify")
-def disqualify_candidate(request: schemas.DisqualifyRequest, db: Session = Depends(get_db)):
-    candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    
-    candidate.current_stage = -1 # Rejected
-    
-    # Log the reason in feedback (optional, appending to resume for now or general log)
-    scores = candidate.stage_scores or {}
-    scores["disqualification_reason"] = request.reason
-    candidate.stage_scores = scores
-    
-    db.commit()
-    return {"status": "disqualified", "message": "Candidate disqualified."}
+
 
 # --- MODULE 1: GENAI ASSESSMENT GENERATOR ---
 @app.post("/generate-assessment", response_model=schemas.AssessmentResponse)
@@ -536,13 +545,15 @@ def get_candidate_applications(email: str, db: Session = Depends(get_db)):
 @app.get("/candidate/status/{email}/{assessment_id}")
 def get_candidate_status(email: str, assessment_id: int, db: Session = Depends(get_db)):
     candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
+    
     if not candidate:
         return {"current_stage": 0, "stage_scores": {}}
         
+    # FIX: Order by ID desc to get the LATEST application status (matching the nuclear disqualification)
     application = db.query(models.Application).filter(
         models.Application.candidate_id == candidate.id,
         models.Application.assessment_id == assessment_id
-    ).first()
+    ).order_by(models.Application.id.desc()).first()
     
     if not application:
          return {"current_stage": 0, "stage_scores": {}}
@@ -595,29 +606,67 @@ def get_resume_questions_get(email: str, assessment_id: int, db: Session = Depen
              {"id": "fallback_2", "text": "What are your key strengths?", "type": "subjective", "difficulty": "easy", "options": []}
         ]
     
-    return questions
+@app.post("/candidate/restart")
+def restart_application(request: schemas.StageUpdate, db: Session = Depends(get_db)):
+    # Reusing StageUpdate schema partially (email, stage=1)
+    candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == candidate.assessment_id # Active job
+    ).first()
+    
+    if application:
+        # BLOCK RESTART IF REJECTED/DISQUALIFIED
+        if application.status in ["Rejected", "Disqualified"]:
+             raise HTTPException(status_code=400, detail=f"Cannot restart. Application status is {application.status}.")
+             
+        application.current_stage = 1
+        application.status = "Incomplete"
+        application.stage_scores = {}
+        candidate.current_stage = 1
+        db.commit()
+        return {"status": "restarted"}
+    
+    raise HTTPException(status_code=404, detail="Active application not found")
 
 @app.post("/candidate/disqualify")
 def disqualify_candidate(request: schemas.DisqualifyRequest, db: Session = Depends(get_db)):
-    # Note: request needs assessment_id or we assume active
-    # For now, let's assume the frontend sends assessment_id in 'reason' or we need to update schema.
-    # To keep it simple, we'll try to find the active application or just update the latest.
-    # Actually, we should update DisqualifyRequest schema, but for now let's query the latest active app.
-    
     candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     
-    # Find latest Incomplete application
-    application = db.query(models.Application).filter(
-        models.Application.candidate_id == candidate.id,
-        models.Application.status == "Incomplete"
-    ).order_by(models.Application.id.desc()).first()
+    # STRATEGY: Find the app to kill.
+    # 1. Try Specific Active App (Incomplete + ID)
+    # 2. Try ANY Active App (Incomplete) - Nuclear Option since we assume exclusivity.
+    
+    application = None
+    
+    # 1. Specific
+    if request.assessment_id and request.assessment_id > 0:
+        application = db.query(models.Application).filter(
+            models.Application.candidate_id == candidate.id,
+            models.Application.assessment_id == request.assessment_id,
+            models.Application.status == "Incomplete"
+        ).first()
 
+    # 2. Fallback: Any Incomplete
     if not application:
-         # Fallback to any app
-         application = db.query(models.Application).filter(models.Application.candidate_id == candidate.id).first()
-         
+        print(f"DEBUG: Specific incomplete app not found for ID {request.assessment_id}. Finding ANY active application to disqualify.")
+        application = db.query(models.Application).filter(
+            models.Application.candidate_id == candidate.id,
+            models.Application.status == "Incomplete"
+        ).order_by(models.Application.id.desc()).first()
+        
+    # 3. Last Resort: Find the application even if status is weird, by ID
+    if not application and request.assessment_id and request.assessment_id > 0:
+         application = db.query(models.Application).filter(
+            models.Application.candidate_id == candidate.id,
+            models.Application.assessment_id == request.assessment_id
+        ).first()
+
     if application:
         application.current_stage = -1 
         application.status = "Disqualified"
@@ -625,12 +674,23 @@ def disqualify_candidate(request: schemas.DisqualifyRequest, db: Session = Depen
         scores = application.stage_scores or {}
         if not isinstance(scores, dict): scores = {}
         
-        scores["disqualification_reason"] = request.reason
+        scores["disqualification_reason"] = request.reason or "Proctoring Violation"
         application.stage_scores = scores
         
         db.commit()
+        db.refresh(application) # Ensure persistence
+        print(f"DEBUG: DISQUALIFIED Application ID {application.id}. Status: {application.status}")
+        return {
+            "status": "disqualified", 
+            "message": "Candidate Disqualified", 
+            "assessment_id": application.assessment_id,
+            "app_id": application.id
+        }
     
-    return {"status": "disqualified"}
+    # If strictly no application found, we can't do much in DB.
+    # But this implies the user is taking a test without an application row??
+    print("DEBUG: CRITICAL - No application found to disqualify.")
+    return {"status": "disqualified", "message": "No active application found, but session terminated."}
 
 @app.post("/stage/complete")
 def complete_stage(update: schemas.StageUpdate, db: Session = Depends(get_db)):

@@ -42,6 +42,7 @@ class SelectJobRequest(BaseModel):
 
 class DisqualifyRequest(BaseModel):
     email: str
+    assessment_id: int
     reason: str
 
 
