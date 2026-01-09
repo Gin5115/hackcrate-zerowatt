@@ -1,21 +1,46 @@
-from pydantic import BaseModel
-from typing import List, Optional
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON
+from sqlalchemy.orm import relationship
+from database import Base
 
-# What we expect to receive from the Frontend
-class JobDescriptionRequest(BaseModel):
-    role_title: str
-    jd_text: str
+class Assessment(Base):
+    __tablename__ = "assessments"
 
-# What a single Question looks like
-class Question(BaseModel):
-    id: int
-    text: str
-    type: str  # "code", "mcq", "subjective"
-    difficulty: str # "easy", "medium", "hard"
-    keywords: List[str]
+    id = Column(Integer, primary_key=True, index=True)
+    role_title = Column(String, index=True)
+    job_description = Column(Text)
+    # Storing skills and questions as JSON for simplicity in SQLite 
+    # (In Prod, you might want separate tables for Questions)
+    suggested_skills = Column(JSON) 
+    questions = Column(JSON) 
 
-# What we send back to the Frontend
-class AssessmentResponse(BaseModel):
-    role: str
-    suggested_skills: List[str]
-    questions: List[Question]
+class Candidate(Base):
+    __tablename__ = "candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    email = Column(String, unique=True, index=True)
+    password = Column(String) # Simple storage for hackathon
+    university = Column(String, nullable=True)
+    
+    # Active Application
+    assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=True) # Current active Selection Process
+    
+    # Multi-Stage Pipeline Fields
+    resume_text = Column(Text, nullable=True)
+    current_stage = Column(Integer, default=1) # 1=Resume, 2=Psychometric, 3=ResumeTest, 4=JDTest, 5=Complete
+    stage_scores = Column(JSON, default={}) # Stores scores for each stage
+    
+class Submission(Base):
+    __tablename__ = "submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id"))
+    assessment_id = Column(Integer, ForeignKey("assessments.id"))
+    answers = Column(JSON) # Store candidate answers
+    score = Column(Integer, default=0)
+    feedback = Column(Text)
+    
+    # Relationships
+    candidate = relationship("Candidate")
+    assessment = relationship("Assessment")
+
