@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
+from models import JobDescriptionRequest, AssessmentResponse, Question # Import our new models
+import random
 
 app = FastAPI(title="Softrate AI Hiring API")
 
@@ -19,18 +19,46 @@ app.add_middleware(
 def read_root():
     return {"status": "active", "message": "Softrate Engine is Running"}
 
-# --- Placeholder for Module 1: Admin Setup ---
-class JobDescription(BaseModel):
-    role_title: str
-    content: str
+# --- MODULE 1: GENAI ASSESSMENT GENERATOR ---
+@app.post("/generate-assessment", response_model=AssessmentResponse)
+def generate_assessment(request: JobDescriptionRequest):
+    """
+    Analyzes the JD and generates relevant questions.
+    (Currently Mocked - replace 'MOCK_AI_LOGIC' with OpenAI call later)
+    """
+    
+    # Simple keyword extraction logic (Mock AI)
+    text = request.jd_text.lower()
+    detected_skills = []
+    questions = []
+    
+    if "python" in text:
+        detected_skills.append("Python")
+        questions.append(Question(
+            id=1, text="Write a function to reverse a string in Python without using [::-1].", 
+            type="code", difficulty="easy", keywords=["python", "string"]
+        ))
+    
+    if "communication" in text or "team" in text:
+        detected_skills.append("Communication")
+        questions.append(Question(
+            id=2, text="Describe a time you had a conflict with a team member. How did you resolve it?", 
+            type="subjective", difficulty="medium", keywords=["hr", "behavioral"]
+        ))
 
-@app.post("/generate-assessment")
-def generate_assessment(jd: JobDescription):
-    # This is where we will eventually plug in the LLM (GPT)
-    return {
-        "message": f"Received JD for {jd.role_title}. AI generation module pending.",
-        "skills_detected": ["Python (Mock)", "Data Analysis (Mock)"]
-    }
+    # Fallback if JD is empty or vague
+    if not questions:
+        questions.append(Question(
+            id=99, text="Explain the core principles of this role.", 
+            type="subjective", difficulty="easy", keywords=["general"]
+        ))
+
+    return AssessmentResponse(
+        role=request.role_title,
+        suggested_skills=detected_skills,
+        questions=questions
+    )
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
