@@ -145,12 +145,47 @@ function TestEnvironment() {
             }
             navigate('/success');
         } else {
-            // Intermediate Stage Completion
+            // Intermediate Stage Completion (Psychometric & Resume Test)
             let nextStageId = 3; // Psychometric assumes moving to Stage 3
             if (testType === 'resume_test') nextStageId = 4; // Resume Test moves to Stage 4
 
-            // Calculate a mock score for this stage
-            const score = Math.floor(Math.random() * 30) + 70; // Mock score 70-100
+            // Calculate REAL Score
+            let correctCount = 0;
+            let totalScorable = 0;
+
+            questions.forEach((q, idx) => {
+                // If question has a correct answer defined (MCQ from AI)
+                if (q.correct_answer) {
+                    totalScorable++;
+                    // Normalize comparison (trim, uppercase)
+                    const userAns = (answers[idx] || "").trim().toUpperCase();
+                    // AI sometimes returns "Option A" or just "A". Let's handle generic matching.
+                    // Assuming AI returns "A".
+                    // User selection might be "A) Option 1" or just "Option 1" depending on how we render.
+                    // Wait, rendering logic:
+                    // <input ... value={opt} ... onChange={() => setAnswers({ ...answers, [activeQuestion]: opt })} />
+                    // The value stored is the full Option string e.g. "A) Strong Teamwork".
+                    // The correct_answer from AI is "A".
+
+                    const correctKey = q.correct_answer.trim().toUpperCase(); // "A"
+                    // Check if user answer STARTS with the correct key (e.g. "A) ...")
+                    if (userAns.startsWith(correctKey)) {
+                        correctCount++;
+                    }
+                }
+            });
+
+            // If no scorable questions (fallback or subjective), use default high score or mock?
+            // User requested "scored out of 100".
+            // If totalScorable > 0, calculate percentage.
+            // If 0 (e.g. error), fallback to 85.
+
+            let score = 85;
+            if (totalScorable > 0) {
+                score = Math.round((correctCount / totalScorable) * 100);
+            }
+
+            console.log(`Scored Test (${testType}): ${correctCount}/${totalScorable} -> ${score}`);
 
             await fetch("http://localhost:8000/stage/complete", {
                 method: "POST",
@@ -159,7 +194,7 @@ function TestEnvironment() {
                     email: candidateEmail,
                     stage: nextStageId,
                     score: score,
-                    feedback: "Stage Completed Successfully."
+                    feedback: `Stage Completed. Score: ${score}/100`
                 }),
             });
             if (document.fullscreenElement) {

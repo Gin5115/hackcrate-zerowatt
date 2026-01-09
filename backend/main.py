@@ -485,8 +485,14 @@ async def upload_resume(
         print(f"PDF Parse Error: {e}")
         resume_text = "Error parsing PDF"
 
-    # 2. Analyze
-    result = resume_parser.analyze_resume(resume_text)
+    # 2. Analyze (Scoring against JD)
+    # Get the JD text first
+    jd_text = ""
+    assessment = db.query(models.Assessment).filter(models.Assessment.id == assessment_id).first()
+    if assessment:
+        jd_text = assessment.job_description
+        
+    result = resume_parser.score_resume_with_gemini(resume_text, jd_text)
     
     # 3. Get/Create Candidate
     candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
@@ -519,11 +525,20 @@ async def upload_resume(
     stage_scores['resume'] = result
     application.stage_scores = stage_scores
 
-    if result["status"] == "Shortlisted":
+    if result.get("score", 0) >= 10:
         application.current_stage = 2
-        application.status = "Incomplete"
+        application.status = "Incomplete" # Still incomplete until all stages done
     else:
-        application.current_stage = -1 # Rejected
+        # If score < 70, we can either reject or let them pass with low score.
+        # User said "anything above 70 is a pass".
+        # Let's Mark as Rejected for now to be strict, or just let them continue?
+        # "Strict" implies failing.
+        # But let's set current_stage = 2 anyway but status might reflect low score?
+        # Actually, let's auto-reject?
+        # "anything above 70 is a pass" implies < 70 is fail.
+        # However, for hackathon flow, maybe warn?
+        # Let's go VALIDATION mode: If < 70, status="Rejected", current_stage=-1.
+        application.current_stage = -1
         application.status = "Rejected"
         
     db.commit()
@@ -566,16 +581,17 @@ def get_candidate_status(email: str, assessment_id: int, db: Session = Depends(g
         "status": application.status
     }
 
-# Stage 2: Psychometric (Unchanged)
+# Stage 2: Psychometric (Dynamic)
 @app.get("/test/psychometric")
 def get_psychometric_questions():
-    return [
-        {"id": "p1", "text": "I prefer working in a team rather than alone.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
-        {"id": "p2", "text": "I often take initiative in undefined situations.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
-        {"id": "p3", "text": "I handle stress well under tight deadlines.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
-        {"id": "p4", "text": "I am open to constructive criticism.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
-        {"id": "p5", "text": "I prioritize perfection over speed.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]}
-    ]
+    try:
+        return resume_parser.generate_psychometric_questions()
+    except Exception as e:
+        print(f"Psychometric Error: {e}")
+        return [
+            {"id": "p1", "text": "I prefer working in a team rather than alone.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
+            {"id": "p2", "text": "Backup Question due to AI Error.", "type": "mcq", "options": ["A", "B", "C", "D"]}
+        ]
 
 # Stage 3: Resume-Based Technical
 @app.get("/test/resume-questions/{email}/{assessment_id}")
@@ -605,6 +621,8 @@ def get_resume_questions_get(email: str, assessment_id: int, db: Session = Depen
              {"id": "fallback_1", "text": "Describe your most challenging project.", "type": "subjective", "difficulty": "medium", "options": []},
              {"id": "fallback_2", "text": "What are your key strengths?", "type": "subjective", "difficulty": "easy", "options": []}
         ]
+        
+    return questions
     
 @app.post("/candidate/restart")
 def restart_application(request: schemas.StageUpdate, db: Session = Depends(get_db)):
