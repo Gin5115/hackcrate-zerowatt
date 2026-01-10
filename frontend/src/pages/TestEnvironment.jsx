@@ -20,7 +20,10 @@ function TestEnvironment() {
     useEffect(() => {
         // 1. Fetch Questions based on Type
         let url = "";
-        if (testType === 'psychometric') url = "http://localhost:8000/test/psychometric";
+        if (testType === 'psychometric') {
+            const id = localStorage.getItem("assessment_id");
+            url = `http://localhost:8000/test/psychometric/${candidateEmail}/${id}`;
+        }
         else if (testType === 'resume_test') {
             const id = localStorage.getItem("assessment_id");
             url = `http://localhost:8000/test/resume-questions/${candidateEmail}/${id}`;

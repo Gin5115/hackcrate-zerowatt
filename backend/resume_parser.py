@@ -4,7 +4,7 @@ from google.api_core.exceptions import TooManyRequests
 import re
 
 # Configure Gemini
-genai.configure(api_key="AIzaSyDUdVqmtSqc_f5JSQN_w0h98F8HRyZhuN8")
+genai.configure(api_key="AIzaSyD2QjbdJQuv7NRxzXA0G6sJRPzlHaL92V4")
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 def analyze_resume(text: str) -> dict:
@@ -342,5 +342,74 @@ def evaluate_answers(questions: list, answers: list) -> dict:
         print(f"⚠️ AI Eval Parse Error: {e}")
 
     return {"score": 50, "overall_feedback": "Error parsing AI evaluation.", "feedback": "Error parsing result."}
+
+def analyze_github_project(url: str) -> dict:
+    """
+    Analyzes a GitHub/Project URL for 'Proof of Work'.
+    Fetches the page content (Readme) and uses AI to score complexity.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    
+    print(f"🔍 Analyzing Project URL: {url}")
+    
+    try:
+        # 1. Fetch Page Content
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return {"score": 0, "feedback": f"Could not access link (Status {response.status_code}). Please provide a public URL.", "tech_stack": []}
+            
+        # 2. Extract Text (Focus on Readme/Body)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # heuristic for github: finding the readme article
+        readme = soup.find('article', class_='markdown-body')
+        if readme:
+            text_content = readme.get_text()[:5000] # Limit context
+        else:
+            text_content = soup.get_text()[:5000]
+            
+        # 3. AI Analysis
+        prompt = f"""
+        Analyze this technical project documentation (README/Landing Page) and assign a 'Proof of Work' Score (0-100).
+        
+        Project URL: {url}
+        Content Snippet:
+        {text_content}
+        
+        Criteria:
+        - Complexity: Is this a real app or a simple 'hello world'/tutorial clone? (Higher score for real apps)
+        - Tech Stack: Does it use modern/relevant tools?
+        - Documentation: Is it well explained?
+        
+        Output JSON:
+        {{
+            "score": <0-100>,
+            "feedback": "Short critique of the project (2 sentences). Mention if it looks like a tutorial clone or production code.",
+            "tech_stack": ["list", "of", "detected", "tech"]
+        }}
+        """
+        
+        ai_response = safe_generate(prompt)
+        result = parse_json_safely(ai_response)
+        
+        if not result:
+            return {"score": 40, "feedback": "Could not verify project complexity automatically. Basic score assigned.", "tech_stack": []}
+            
+        # Normalize Keys
+        if "score" not in result:
+             # Try commonly used alt keys or default
+             result["score"] = result.get("proof_of_work_score", result.get("complexity_score", 0))
+        
+        if "feedback" not in result:
+             result["feedback"] = result.get("analysis", "Project analyzed.")
+             
+        return result
+
+    except Exception as e:
+        print(f"⚠️ Project Analysis Error: {e}")
+        return {"score": 0, "feedback": f"Error verifying link: {str(e)}", "tech_stack": []}
 
 

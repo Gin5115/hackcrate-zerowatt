@@ -272,6 +272,62 @@ function AdminDashboard() {
                         </div>
                     </div>
 
+                    {/* DYNAMIC CHARTS SECTION */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* University Distribution Chart */}
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-4 uppercase">University Distribution (Filtered)</h3>
+                            <div className="flex items-end space-x-4 h-40 border-b border-gray-200 dark:border-gray-700 pb-2 overflow-x-auto">
+                                {Object.entries(filteredCandidates.reduce((acc, c) => {
+                                    const uni = c.university || "Unknown";
+                                    acc[uni] = (acc[uni] || 0) + 1;
+                                    return acc;
+                                }, {})).map(([uni, count], i, arr) => {
+                                    const max = Math.max(...Object.values(arr.reduce((a, [_, v]) => ({ ...a, v }), { v: 0 }))); // Simplified max calculation
+                                    const height = max > 0 ? (count / 10) * 100 : 0; // Keeping scaling simple, assuming relative. Actually let's do real relative.
+                                    const realMax = Math.max(...arr.map(([_, c]) => c));
+                                    const pct = realMax > 0 ? (count / realMax) * 100 : 0;
+
+                                    return (
+                                        <div key={uni} className="flex flex-col items-center group w-16 flex-shrink-0">
+                                            <div className="w-full relative group">
+                                                <div className="absolute bottom-full mb-1 text-xs font-bold text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">{count}</div>
+                                                <div className="w-8 mx-auto bg-blue-500 rounded-t-lg transition-all duration-500 hover:bg-blue-600" style={{ height: `${pct * 0.8}px`, minHeight: '4px' }}></div>
+                                            </div>
+                                            <div className="mt-2 text-[10px] text-gray-500 truncate w-full text-center" title={uni}>{uni.substring(0, 8)}...</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Status Distribution */}
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-4 uppercase">Status Breakdown</h3>
+                            <div className="space-y-4">
+                                {['Qualified', 'In Progress', 'Rejected', 'Disqualified'].map(status => {
+                                    const count = filteredCandidates.filter(c =>
+                                        status === 'In Progress' ? (c.status !== 'Qualified' && c.status !== 'Rejected' && c.status !== 'Disqualified') : c.status === status
+                                    ).length;
+                                    const pct = filteredCandidates.length > 0 ? (count / filteredCandidates.length) * 100 : 0;
+                                    const color = status === 'Qualified' ? 'bg-green-500' : status === 'Rejected' ? 'bg-red-500' : status === 'Disqualified' ? 'bg-red-800' : 'bg-blue-500';
+
+                                    return (
+                                        <div key={status}>
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="font-bold text-gray-600 dark:text-gray-400">{status}</span>
+                                                <span className="text-gray-500">{count} ({Math.round(pct)}%)</span>
+                                            </div>
+                                            <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-2">
+                                                <div className={`h-2 rounded-full ${color}`} style={{ width: `${pct}%` }}></div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Comparison Result Section */}
                     {compareResult && (
                         <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-100 dark:border-purple-900 border-l-4 border-l-purple-500">
@@ -360,38 +416,135 @@ function AdminDashboard() {
                         </table>
                     </div>
 
-
-                    {/* Candidate Details Modal */}
+                    {/* Candidate Details Modal - ENHANCED */}
                     {selectedCandidate && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-                            <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl relative">
-                                <button onClick={() => setSelectedCandidate(null)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 text-xl font-bold">&times;</button>
-                                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{selectedCandidate.name}</h2>
-                                <p className="text-gray-500 dark:text-gray-400 mb-6">{selectedCandidate.email} • {selectedCandidate.university}</p>
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm">
+                            <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl relative border dark:border-gray-700">
+                                <button onClick={() => setSelectedCandidate(null)} className="absolute top-6 right-6 text-gray-400 hover:text-gray-700 text-2xl font-bold transition-colors">&times;</button>
 
-                                <div className="space-y-6">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                                            <h3 className="text-sm font-bold text-gray-500 uppercase">Role</h3>
-                                            <p className="text-lg font-bold dark:text-white">{selectedCandidate.role}</p>
-                                        </div>
-                                        <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                                            <h3 className="text-sm font-bold text-gray-500 uppercase">Status</h3>
-                                            <p className="text-lg font-bold dark:text-white">{selectedCandidate.status}</p>
+                                {/* Header */}
+                                <div className="mb-8 border-b dark:border-gray-700 pb-6">
+                                    <div className="flex items-center gap-4 mb-2">
+                                        <h2 className="text-3xl font-bold text-gray-900 dark:text-white">{selectedCandidate.name}</h2>
+                                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${selectedCandidate.status === 'Qualified' ? 'bg-green-100 text-green-700' :
+                                            selectedCandidate.status === 'Rejected' || selectedCandidate.status === 'Disqualified' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                            }`}>
+                                            {selectedCandidate.status}
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                        <span className="font-medium text-gray-700 dark:text-gray-300">{selectedCandidate.role}</span>
+                                        <span>•</span>
+                                        <span>{selectedCandidate.email}</span>
+                                        <span>•</span>
+                                        <span>{selectedCandidate.university}</span>
+                                    </p>
+                                </div>
+
+                                {/* Skills & Scores Visualization */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                                    <div className="bg-gray-50 dark:bg-gray-700/50 p-6 rounded-2xl">
+                                        <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Performance Overview</h3>
+                                        <div className="space-y-4">
+                                            {[
+                                                { label: 'Resume Check', score: selectedCandidate.stage_scores?.resume?.score || 0, color: 'bg-blue-500' },
+                                                { label: 'Psychometric', score: selectedCandidate.stage_scores?.stage_2?.score || 0, color: 'bg-purple-500' },
+                                                { label: 'Resume Tech', score: selectedCandidate.stage_scores?.stage_3?.score || 0, color: 'bg-indigo-500' },
+                                                { label: 'Final Assessment', score: selectedCandidate.stage_scores?.final?.score || 0, color: 'bg-green-500' }
+                                            ].map((item, idx) => (
+                                                <div key={idx}>
+                                                    <div className="flex justify-between text-xs font-bold mb-1 dark:text-gray-300">
+                                                        <span>{item.label}</span>
+                                                        <span>{item.score}%</span>
+                                                    </div>
+                                                    <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5">
+                                                        <div className={`h-2.5 rounded-full shadow-sm transition-all duration-1000 ${item.color}`} style={{ width: `${item.score}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
 
-                                    <div>
-                                        <h3 className="font-bold text-lg dark:text-white mb-3">Performance Data</h3>
-                                        <pre className="bg-gray-100 dark:bg-gray-900 p-4 rounded-lg text-sm overflow-x-auto text-gray-800 dark:text-gray-300">
-                                            {JSON.stringify(selectedCandidate.stage_scores, null, 2)}
-                                        </pre>
-                                    </div>
-
-                                    <div className="flex justify-end pt-4">
-                                        <button onClick={() => handleDeleteCandidate(selectedCandidate.id)} className="bg-red-600 text-white px-4 py-2 rounded font-bold hover:bg-red-700">Delete Candidate</button>
+                                    <div className="bg-gray-50 dark:bg-gray-700/50 p-6 rounded-2xl flex flex-col justify-center">
+                                        <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Key Insights</h3>
+                                        <div className="space-y-3">
+                                            <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-200 dark:border-green-800">
+                                                <span className="text-green-700 dark:text-green-400 font-bold text-xs uppercase block mb-1">Top Strength</span>
+                                                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                    {(() => {
+                                                        const s = selectedCandidate.stage_scores;
+                                                        const scores = [
+                                                            { n: 'Resume', v: s?.resume?.score || 0 },
+                                                            { n: 'Psychometric', v: s?.stage_2?.score || 0 },
+                                                            { n: 'Technical', v: s?.stage_3?.score || 0 },
+                                                            { n: 'Core Skills', v: s?.final?.score || 0 }
+                                                        ];
+                                                        const max = scores.reduce((prev, current) => (prev.v > current.v) ? prev : current);
+                                                        return max.v > 0 ? `${max.n} (${max.v}%)` : "Not enough data";
+                                                    })()}
+                                                </p>
+                                            </div>
+                                            <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-lg border border-red-200 dark:border-red-800">
+                                                <span className="text-red-700 dark:text-red-400 font-bold text-xs uppercase block mb-1">Needs Focus</span>
+                                                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                    {(() => {
+                                                        const s = selectedCandidate.stage_scores;
+                                                        const scores = [
+                                                            { n: 'Resume', v: s?.resume?.score || 100 }, // Default 100 to avoid finding 0s if missing
+                                                            { n: 'Psychometric', v: s?.stage_2?.score || 100 },
+                                                            { n: 'Technical', v: s?.stage_3?.score || 100 },
+                                                            { n: 'Core Skills', v: s?.final?.score || 100 }
+                                                        ];
+                                                        // Filter only if score exists (really < 100 implies we tried?)
+                                                        // Simplified: just find min
+                                                        const min = scores.reduce((prev, current) => (prev.v < current.v) ? prev : current);
+                                                        // If all are 100 (defaults), say None
+                                                        if (min.v === 100) return "N/A";
+                                                        return `${min.n} (${min.v}%)`;
+                                                    })()}
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
+
+                                {/* Detailed Feedback */}
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Detailed Feedback Analysis</h3>
+                                    <div className="grid grid-cols-1 gap-4">
+                                        {[
+                                            { title: "📄 Resume Screening", data: selectedCandidate.stage_scores?.resume },
+                                            { title: "🧠 Psychometric Profile", data: selectedCandidate.stage_scores?.stage_2 },
+                                            { title: "💻 Technical Interview", data: selectedCandidate.stage_scores?.stage_3 },
+                                            { title: "🏆 Final Assessment", data: selectedCandidate.stage_scores?.final }
+                                        ].map((card, i) => (
+                                            card.data && (
+                                                <div key={i} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-5 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                                                    <div className="flex justify-between items-center mb-2">
+                                                        <h4 className="font-bold text-gray-700 dark:text-gray-300">{card.title}</h4>
+                                                        <span className="font-mono font-bold text-purple-600">{card.data.score || 0}/100</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                                                        {card.data.feedback || "No feedback recorded."}
+                                                    </p>
+                                                </div>
+                                            )
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {
+                                    /* 
+                                     * DELETE BUTTON REMOVED as per request.
+                                     * Use DB Manager tab for deletions if strictly necessary.
+                                     */
+                                }
+                                {/* <div className="flex justify-end pt-8 mt-4 border-t dark:border-gray-700">
+                                    <button onClick={() => handleDeleteCandidate(selectedCandidate.id)} className="bg-red-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-red-700 shadow-md transition-all hover:scale-105">
+                                        Delete Candidate
+                                    </button>
+                                </div> */}
+
                             </div>
                         </div>
                     )}

@@ -73,17 +73,22 @@ function JobBoard() {
     }
 
     const handleApply = async (jobId, jobRole) => {
+        const app = Array.isArray(statusData) ? statusData.find(a => a.assessment_id === jobId) : null;
+
+        // If already applied (any status), just navigate to dashboard to view results/continue
+        if (app) {
+            localStorage.setItem("assessment_id", jobId);
+            navigate('/candidate/application');
+            return;
+        }
+
         // Validation handled by backend mainly, but rapid feedback here
         if (isAnyQualified()) {
             alert("You have already Qualified for a position. You cannot apply for more.");
             return;
         }
 
-        const app = Array.isArray(statusData) ? statusData.find(a => a.assessment_id === jobId) : null;
-        if (app && (app.status === "Rejected" || app.status === "Disqualified")) {
-            alert("You have been rejected for this role. You cannot re-apply.");
-            return;
-        }
+
 
         const confirmMsg = app
             ? `Resume application for ${jobRole}?`
@@ -166,14 +171,14 @@ function JobBoard() {
                                 </div>
                                 <button
                                     onClick={() => handleApply(job.id, job.role_title)}
-                                    disabled={getJobStatus(job.id) !== "Not Applied" && getJobStatus(job.id) !== "In Progress"}
-                                    className={`w-full text-white py-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-2 ${(getJobStatus(job.id) !== "Not Applied" && getJobStatus(job.id) !== "In Progress") ? "bg-gray-400 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700"
+                                    className={`w-full text-white py-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-2 ${getJobStatus(job.id) === "Qualified" ? "bg-green-600 hover:bg-green-700" :
+                                        getJobStatus(job.id) === "Rejected" || getJobStatus(job.id) === "Disqualified" ? "bg-gray-600 hover:bg-gray-700" :
+                                            "bg-purple-600 hover:bg-purple-700"
                                         }`}
                                 >
                                     {getJobStatus(job.id) === "Not Applied" ? "Apply Now" :
-                                        getJobStatus(job.id) === "Qualified" ? "Completed" :
-                                            getJobStatus(job.id) === "Rejected" ? "Rejected" :
-                                                getJobStatus(job.id) === "Disqualified" ? "Disqualified" : "Continue Application"}
+                                        getJobStatus(job.id) === "Qualified" ? "View Results" :
+                                            getJobStatus(job.id) === "Rejected" || getJobStatus(job.id) === "Disqualified" ? "View Analysis" : "Continue Application"}
                                 </button>
                             </div>
                         </div>

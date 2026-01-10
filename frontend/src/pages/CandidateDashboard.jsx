@@ -195,6 +195,61 @@ function CandidateDashboard() {
                         <ResumeUpload onComplete={fetchStatus} assessmentId={localStorage.getItem("assessment_id")} />
                     )}
 
+                    {/* STAGE 5: Project Validation View */}
+                    {currentStage === 5 && (
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-700 mb-8">
+                            <div className="bg-pink-600 p-6 text-center">
+                                <h2 className="text-3xl font-bold text-white mb-2">Stage 5: Deep Project Validation</h2>
+                                <p className="text-pink-100">AI Analysis of your GitHub Code/Portfolio.</p>
+                            </div>
+                            <div className="p-8">
+                                {status.stage_scores?.stage5 ? (
+                                    <div className="text-center">
+                                        <div className="text-6xl mb-4">🏆</div>
+                                        <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Analysis Complete!</h3>
+                                        <div className="text-5xl font-bold text-pink-600 dark:text-pink-400 my-4">{status.stage_scores.stage5}/100</div>
+                                        <p className="text-gray-600 dark:text-gray-300 italic mb-6">
+                                            "{status.stage_scores.project_feedback?.feedback}"
+                                        </p>
+                                        <div className="flex flex-wrap justify-center gap-2">
+                                            {status.stage_scores.project_feedback?.tech_stack?.map(t => (
+                                                <span key={t} className="px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm font-bold">{t}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="max-w-xl mx-auto">
+                                        <label className="block text-gray-700 dark:text-gray-300 font-bold mb-2">GitHub / Portfolio URL</label>
+                                        <div className="flex gap-4">
+                                            <input type="url" id="projUrl" className="flex-1 p-3 border dark:border-gray-600 rounded-lg dark:bg-gray-900 outline-none focus:ring-2 focus:ring-pink-500" placeholder="https://github.com/..." />
+                                            <button
+                                                onClick={() => {
+                                                    const url = document.getElementById('projUrl').value;
+                                                    if (!url) return alert("Enter URL!");
+                                                    document.getElementById('vizBtn').innerText = "Analyzing...";
+                                                    fetch("http://localhost:8000/stage/project-validation", {
+                                                        method: "POST",
+                                                        headers: { "Content-Type": "application/json" },
+                                                        body: JSON.stringify({ email: localStorage.getItem("candidate_email"), data: { url } })
+                                                    })
+                                                        .then(res => res.json())
+                                                        .then(d => {
+                                                            alert(`Score: ${d.score}`);
+                                                            window.location.reload();
+                                                        });
+                                                }}
+                                                id="vizBtn"
+                                                className="bg-pink-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-pink-700"
+                                            >
+                                                Analyze
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* REJECTED / DISQUALIFIED VIEW */}
                     {(status.status === "Rejected" || status.status === "Disqualified" || currentStage === -1) && (
                         <div className="text-center p-8 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800">
@@ -211,6 +266,73 @@ function CandidateDashboard() {
                                             {status.stage_scores.final.score} <span className="text-base text-gray-500">/ 100</span>
                                         </div>
                                         <p className="text-sm text-gray-500">Final Weighted Score</p>
+                                    </div>
+
+
+                                    {/* VISUAL ANALYTICS SECTION (REJECTED) */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 text-left">
+                                        {/* Skill Bars */}
+                                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                                            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Performance Overview</h3>
+                                            <div className="space-y-4">
+                                                {[
+                                                    { label: 'Resume Fit', score: status.stage_scores?.resume?.score || 0, color: 'bg-blue-500' },
+                                                    { label: 'Psychometric', score: status.stage_scores?.stage_2?.score || 0, color: 'bg-purple-500' },
+                                                    { label: 'Technical Depth', score: status.stage_scores?.stage_3?.score || 0, color: 'bg-indigo-500' },
+                                                    { label: 'Job Simulation', score: status.stage_scores?.final?.score || 0, color: 'bg-green-500' }
+                                                ].map((item, idx) => (
+                                                    <div key={idx}>
+                                                        <div className="flex justify-between text-xs font-bold mb-1 dark:text-gray-300">
+                                                            <span>{item.label}</span>
+                                                            <span>{item.score}%</span>
+                                                        </div>
+                                                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                                                            <div className={`h-2.5 rounded-full shadow-sm ${item.color}`} style={{ width: `${item.score}%` }}></div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Key Insights */}
+                                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm flex flex-col justify-center">
+                                            <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Feedback Analysis</h3>
+                                            <div className="space-y-3">
+                                                <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                                                    <span className="text-green-700 dark:text-green-400 font-bold text-xs uppercase block mb-1">Strongest Area</span>
+                                                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                        {(() => {
+                                                            const s = status.stage_scores;
+                                                            const scores = [
+                                                                { n: 'Resume Fit', v: s?.resume?.score || 0 },
+                                                                { n: 'Psychometric', v: s?.stage_2?.score || 0 },
+                                                                { n: 'Technical Depth', v: s?.stage_3?.score || 0 },
+                                                                { n: 'Job Simulation', v: s?.final?.score || 0 }
+                                                            ];
+                                                            const max = scores.reduce((prev, current) => (prev.v > current.v) ? prev : current);
+                                                            return max.v > 0 ? `${max.n} (${max.v}%)` : "Not enough data";
+                                                        })()}
+                                                    </p>
+                                                </div>
+                                                <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                                                    <span className="text-red-700 dark:text-red-400 font-bold text-xs uppercase block mb-1">Impact Factor</span>
+                                                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                        {(() => {
+                                                            const s = status.stage_scores;
+                                                            const scores = [
+                                                                { n: 'Resume Fit', v: s?.resume?.score || 100 },
+                                                                { n: 'Psychometric', v: s?.stage_2?.score || 100 },
+                                                                { n: 'Technical Depth', v: s?.stage_3?.score || 100 },
+                                                                { n: 'Job Simulation', v: s?.final?.score || 100 }
+                                                            ];
+                                                            const min = scores.reduce((prev, current) => (prev.v < current.v) ? prev : current);
+                                                            if (min.v === 100) return "N/A";
+                                                            return `${min.n} (${min.v}%)`;
+                                                        })()}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
 
                                     {/* Breakdown Table for Rejection */}
@@ -278,6 +400,72 @@ function CandidateDashboard() {
                                         <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
                                             {status.stage_scores?.final?.feedback || "Excellent performance across all domains. The recruitment team will contact you shortly for the Face-to-Face round."}
                                         </p>
+                                    </div>
+                                </div>
+
+                                {/* VISUAL ANALYTICS SECTION */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                                    {/* Skill Bars */}
+                                    <div className="bg-gray-50 dark:bg-gray-900/50 p-6 rounded-2xl border border-gray-100 dark:border-gray-800">
+                                        <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Performance Overview</h3>
+                                        <div className="space-y-4">
+                                            {[
+                                                { label: 'Resume Fit', score: status.stage_scores?.resume?.score || 0, color: 'bg-blue-500' },
+                                                { label: 'Psychometric', score: status.stage_scores?.stage_2?.score || 0, color: 'bg-purple-500' },
+                                                { label: 'Technical Depth', score: status.stage_scores?.stage_3?.score || 0, color: 'bg-indigo-500' },
+                                                { label: 'Job Simulation', score: status.stage_scores?.final?.score || 0, color: 'bg-green-500' }
+                                            ].map((item, idx) => (
+                                                <div key={idx}>
+                                                    <div className="flex justify-between text-xs font-bold mb-1 dark:text-gray-300">
+                                                        <span>{item.label}</span>
+                                                        <span>{item.score}%</span>
+                                                    </div>
+                                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                                                        <div className={`h-2.5 rounded-full shadow-sm ${item.color}`} style={{ width: `${item.score}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Key Insights */}
+                                    <div className="bg-gray-50 dark:bg-gray-900/50 p-6 rounded-2xl border border-gray-100 dark:border-gray-800 flex flex-col justify-center">
+                                        <h3 className="text-sm font-bold text-gray-500 uppercase mb-4">Your Profile Insights</h3>
+                                        <div className="space-y-3">
+                                            <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-200 dark:border-green-800">
+                                                <span className="text-green-700 dark:text-green-400 font-bold text-xs uppercase block mb-1">Top Strength</span>
+                                                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                    {(() => {
+                                                        const s = status.stage_scores;
+                                                        const scores = [
+                                                            { n: 'Resume Fit', v: s?.resume?.score || 0 },
+                                                            { n: 'Psychometric', v: s?.stage_2?.score || 0 },
+                                                            { n: 'Technical Depth', v: s?.stage_3?.score || 0 },
+                                                            { n: 'Job Simulation', v: s?.final?.score || 0 }
+                                                        ];
+                                                        const max = scores.reduce((prev, current) => (prev.v > current.v) ? prev : current);
+                                                        return max.v > 0 ? `${max.n} (${max.v}%)` : "Not enough data";
+                                                    })()}
+                                                </p>
+                                            </div>
+                                            <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                                                <span className="text-blue-700 dark:text-blue-400 font-bold text-xs uppercase block mb-1">Growth Area</span>
+                                                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                                    {(() => {
+                                                        const s = status.stage_scores;
+                                                        const scores = [
+                                                            { n: 'Resume Fit', v: s?.resume?.score || 100 },
+                                                            { n: 'Psychometric', v: s?.stage_2?.score || 100 },
+                                                            { n: 'Technical Depth', v: s?.stage_3?.score || 100 },
+                                                            { n: 'Job Simulation', v: s?.final?.score || 100 }
+                                                        ];
+                                                        const min = scores.reduce((prev, current) => (prev.v < current.v) ? prev : current);
+                                                        if (min.v === 100) return "Balanced Profile"; // Nicer message than N/A
+                                                        return `${min.n} (${min.v}%)`;
+                                                    })()}
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 

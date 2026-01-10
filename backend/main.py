@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.attributes import flag_modified
 import json
 
 # Import DB stuff
@@ -426,24 +427,63 @@ def list_candidates(db: Session = Depends(get_db)):
     data = []
     for app in applications:
         # Get Final Score if available
-        final_score = "N/A"
-        submission = db.query(models.Submission).filter(models.Submission.application_id == app.id).first()
-        if submission:
-            final_score = submission.score
+        scores = app.stage_scores or {}
+        
+        # 500-POINT SCALE LOGIC
+        # s1: Resume (0-100)
+        # s2: Psychometric (0-100)
+        # s3: Tech Round (0-100)
+        # s4: JD Fit/Test (0-100)
+        # s5: Project Proof (0-100)
+        
+        s1 = scores.get("resume_score", 0)
+        
+        # Psychometric might be stored as 'stage_2' or 'psychometric_score'
+        # based on resume_parser/main logic, let's check both
+        s2 = scores.get("psychometric_score", 0)
+        if not s2 and "stage_2" in scores: s2 = scores["stage_2"].get("score", 0)
             
+        s3 = scores.get("stage3_score", 0)
+        if not s3 and "stage_3" in scores: s3 = scores["stage_3"].get("score", 0)
+            
+        s4 = scores.get("final_score", 0) 
+        # But wait, final_score was previously Weighted Average (0-100).
+        # if we re-calculate, we should extract raw if possible or just use it as part.
+        # Actually, let's use the 'breakdown' if available for cleaner data.
+        # But for backward compatibility:
+        if "final" in scores and "breakdown" in scores["final"]:
+             bd = scores["final"]["breakdown"]
+             s1 = bd.get("resume_parsing", {}).get("score", s1)
+             s2 = bd.get("psychometric", {}).get("score", s2)
+             s3 = bd.get("resume_tech", {}).get("score", s3)
+             s4 = bd.get("jd_test", {}).get("score", s4)
+             
+        s5 = scores.get("stage5", 0)
+        
+        total_score = s1 + s2 + s3 + s4 + s5
+        
+        breakdown = {
+            "resume": s1,
+            "psychometric": s2,
+            "tech": s3,
+            "jd_test": s4,
+            "project": s5
+        }
+        
         data.append({
-            "id": app.candidate.id, # Keeping candidate ID reference
-            "app_id": app.id, # New Application ID
+            "id": app.candidate.id,
+            "app_id": app.id,
             "name": app.candidate.name,
             "email": app.candidate.email,
-            "university": app.candidate.university or "N/A",
             "role": app.assessment.role_title if app.assessment else "Unknown",
-            "current_stage": app.current_stage,
-            "ats_score": app.stage_scores.get('resume', {}).get('score', 'N/A') if app.stage_scores else 'N/A',
-            "final_score": final_score,
             "status": app.status,
-            "stage_scores": app.stage_scores
+            "score": total_score, # Now out of 500
+            "university": app.candidate.university,
+            "breakdown": breakdown
         })
+        
+    # Sort by total score descending
+    data.sort(key=lambda x: x["score"], reverse=True)
     return data
 
 @app.delete("/candidate/{id}")
@@ -579,16 +619,43 @@ def get_candidate_status(email: str, assessment_id: int, db: Session = Depends(g
     }
 
 # Stage 2: Psychometric (Dynamic)
-@app.get("/test/psychometric")
-def get_psychometric_questions():
+# Stage 2: Psychometric (Dynamic & Persisted)
+@app.get("/test/psychometric/{email}/{assessment_id}")
+def get_psychometric_questions_persisted(email: str, assessment_id: int, db: Session = Depends(get_db)):
+    candidate = db.query(models.Candidate).filter(models.Candidate.email == email).first()
+    if not candidate:
+         raise HTTPException(status_code=400, detail="Candidate not found")
+         
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.assessment_id == assessment_id
+    ).first()
+    
+    if not application:
+        raise HTTPException(status_code=400, detail="Application not found")
+
+    # CHECK EXISTING
+    current_ids = dict(application.stage_scores) if application.stage_scores else {}
+    if "psychometric_questions" in current_ids and current_ids["psychometric_questions"]:
+        print("✅ Returning cached Psychometric Questions")
+        return current_ids["psychometric_questions"]
+
     try:
-        return resume_parser.generate_psychometric_questions()
+        questions = resume_parser.generate_psychometric_questions()
     except Exception as e:
         print(f"Psychometric Error: {e}")
-        return [
+        questions = [
             {"id": "p1", "text": "I prefer working in a team rather than alone.", "type": "mcq", "options": ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]},
-            {"id": "p2", "text": "Backup Question due to AI Error.", "type": "mcq", "options": ["A", "B", "C", "D"]}
+            {"id": "p2", "text": "Backup: I handle stress well.", "type": "mcq", "options": ["Disagree", "Neutral", "Agree"]}
         ]
+
+    # PERSIST
+    current_ids["psychometric_questions"] = questions
+    application.stage_scores = current_ids
+    flag_modified(application, "stage_scores")
+    db.commit()
+
+    return questions
 
 # Stage 3: Resume-Based Technical
 @app.get("/test/resume-questions/{email}/{assessment_id}")
@@ -605,6 +672,12 @@ def get_resume_questions_get(email: str, assessment_id: int, db: Session = Depen
     if not application or not application.resume_text:
         raise HTTPException(status_code=400, detail="Resume/Application not found")
     
+    # CHECK FOR EXISTING QUESTIONS
+    current_ids = dict(application.stage_scores) if application.stage_scores else {}
+    if "resume_questions" in current_ids and current_ids["resume_questions"]:
+        print("✅ Returning cached Resume Questions")
+        return current_ids["resume_questions"]
+
     # Use Gemini to generate questions dynamically
     try:
         questions = resume_parser.generate_resume_questions(application.resume_text)
@@ -618,6 +691,12 @@ def get_resume_questions_get(email: str, assessment_id: int, db: Session = Depen
              {"id": "fallback_1", "text": "Describe your most challenging project.", "type": "subjective", "difficulty": "medium", "options": []},
              {"id": "fallback_2", "text": "What are your key strengths?", "type": "subjective", "difficulty": "easy", "options": []}
         ]
+    
+    # PERSIST QUESTIONS
+    current_ids["resume_questions"] = questions
+    application.stage_scores = current_ids
+    flag_modified(application, "stage_scores") # Explicitly flag for SQLAlchemy tracking
+    db.commit()
         
     return questions
     
@@ -706,6 +785,42 @@ def disqualify_candidate(request: schemas.DisqualifyRequest, db: Session = Depen
     # But this implies the user is taking a test without an application row??
     print("DEBUG: CRITICAL - No application found to disqualify.")
     return {"status": "disqualified", "message": "No active application found, but session terminated."}
+
+@app.post("/stage/project-validation")
+def validate_project(request: schemas.StageUpdate, db: Session = Depends(get_db)):
+    # Reusing StageUpdate: stage=5, data={"url": "..."}
+    candidate = db.query(models.Candidate).filter(models.Candidate.email == request.email).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    application = db.query(models.Application).filter(
+        models.Application.candidate_id == candidate.id,
+        models.Application.status == "Incomplete"
+    ).first()
+    
+    if not application:
+        raise HTTPException(status_code=404, detail="Active application not found")
+        
+    url = request.data.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+        
+    # Analyze
+    result = resume_parser.analyze_github_project(url)
+    
+    # Save Score
+    scores = dict(application.stage_scores) if application.stage_scores else {}
+    scores["stage5"] = result["score"]
+    scores["project_feedback"] = result
+    
+    application.stage_scores = scores
+    flag_modified(application, "stage_scores")
+    
+    # Also update current stage to 5 (Done)
+    application.current_stage = 5
+    db.commit()
+    
+    return result
 
 @app.post("/stage/complete")
 def complete_stage(update: schemas.StageUpdate, db: Session = Depends(get_db)):
