@@ -337,7 +337,8 @@ def submit_assessment(request: schemas.SubmissionRequest, db: Session = Depends(
     
     # --- WEIGHTED SCORING LOGIC ---
     # Retrieve previous scores
-    st_scores = application.stage_scores or {}
+    # FORCE NEW DICT REFERENCE for SQLAlchemy change tracking
+    st_scores = dict(application.stage_scores) if application.stage_scores else {}
     
     # helper to safely get int score
     def get_score(data):
