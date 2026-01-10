@@ -18,6 +18,9 @@ function AdminDashboard() {
     // --- Analytics State ---
     const [filters, setFilters] = useState({ university: '', search: '' });
     const [selectedCandidate, setSelectedCandidate] = useState(null); // For detailed view
+    const [activeCompare, setActiveCompare] = useState([]); // List of IDs to compare
+    const [compareResult, setCompareResult] = useState(null);
+    const [compareLoading, setCompareLoading] = useState(false);
 
     // --- DB Manager State ---
     const [managerMode, setManagerMode] = useState('assessments'); // 'assessments' or 'candidates'
@@ -74,6 +77,43 @@ function AdminDashboard() {
         return matchUni && matchSearch;
     });
 
+    // Comparison Logic
+    const toggleCompare = (id) => {
+        if (activeCompare.includes(id)) {
+            setActiveCompare(activeCompare.filter(cid => cid !== id));
+        } else {
+            if (activeCompare.length >= 3) {
+                alert("Select max 3 candidates to compare.");
+                return;
+            }
+            setActiveCompare([...activeCompare, id]);
+        }
+    };
+
+    const runComparison = async () => {
+        setCompareLoading(true);
+        try {
+            const response = await fetch("http://localhost:8000/admin/compare-candidates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items: activeCompare }),
+            });
+            const data = await response.json();
+            setCompareResult(data.comparison);
+        } catch (error) {
+            alert("Comparison failed.");
+        }
+        setCompareLoading(false);
+    };
+
+    // Stats
+    const totalC = candidates.length;
+    const qualifiedC = candidates.filter(c => c.status === 'Qualified').length;
+    const passRate = totalC > 0 ? Math.round((qualifiedC / totalC) * 100) : 0;
+
+    // Sort Candidates: Skill Score (Final) vs Pedigree (ATS)
+    // Let's create a sorted view if user clicks headers, but for now default.
+
     // --- DB MANAGER LOGIC ---
     // Assessment Management
     const handleEditSelect = async (id) => {
@@ -128,24 +168,29 @@ function AdminDashboard() {
 
 
     return (
-        <div className="min-h-screen bg-white dark:bg-gray-900 p-8 font-sans transition-colors duration-200">
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8 font-sans transition-colors duration-200">
             {/* Header & Tabs */}
-            <div className="max-w-7xl mx-auto mb-8">
+            <div className="max-w-7xl mx-auto mb-8 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700">
                 <div className="flex justify-between items-center mb-6">
-                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Admin Dashboard</h1>
-                    <button onClick={handleLogout} className="text-red-600 hover:text-red-800 font-medium border border-red-200 dark:border-red-900 px-4 py-2 rounded-lg bg-red-50 dark:bg-gray-800">
+                    <div>
+                        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">Recruiter Command Center</h1>
+                        <p className="text-gray-500 text-sm">Automated Hiring & Intelligence Dashboard</p>
+                    </div>
+                    <button onClick={handleLogout} className="text-red-600 hover:text-red-800 font-medium border border-red-200 dark:border-red-900 px-4 py-2 rounded-lg bg-red-50 dark:bg-gray-800 transition-colors">
                         Logout
                     </button>
                 </div>
 
-                <div className="flex space-x-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex space-x-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-xl w-max">
                     {['generator', 'analytics', 'manager'].map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
-                            className={`pb-3 px-4 font-medium capitalize transition-colors ${activeTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'}`}
+                            className={`px-6 py-2 rounded-lg text-sm font-bold capitalize transition-all ${activeTab === tab
+                                ? 'bg-white dark:bg-gray-600 text-purple-600 shadow-sm transform scale-105'
+                                : 'text-gray-500 hover:text-gray-700 dark:text-gray-300'}`}
                         >
-                            {tab === 'manager' ? 'DB Manager' : tab}
+                            {tab === 'manager' ? 'Database' : tab}
                         </button>
                     ))}
                 </div>
@@ -154,34 +199,46 @@ function AdminDashboard() {
             {/* TAB CONTENT: GENERATOR */}
             {activeTab === 'generator' && (
                 <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-1 border-r dark:border-gray-700 pr-8 flex flex-col">
-                        <h2 className="text-xl font-bold mb-4 dark:text-gray-200">New Assessment</h2>
-                        <div className="space-y-4 mb-8">
+                    <div className="lg:col-span-1 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border dark:border-gray-700">
+                        <h2 className="text-xl font-bold mb-6 dark:text-gray-200 flex items-center gap-2">
+                            ⚡ Generate Assessment
+                        </h2>
+                        <div className="space-y-5">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-400">Role Title</label>
-                                <input type="text" className="w-full border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded-lg mt-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Role Title</label>
+                                <input type="text" className="w-full border dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-3 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none transition-all"
                                     placeholder="e.g. Senior Frontend Engineer" value={role} onChange={e => setRole(e.target.value)} />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-400">Job Description</label>
-                                <textarea className="w-full border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded-lg mt-1 h-32 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                                    placeholder="Paste JD..." value={jd} onChange={e => setJd(e.target.value)} />
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Job Description</label>
+                                <textarea className="w-full border dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-3 rounded-xl h-40 focus:ring-2 focus:ring-purple-500 outline-none resize-none transition-all"
+                                    placeholder="Paste full JD here..." value={jd} onChange={e => setJd(e.target.value)} />
                             </div>
-                            <button onClick={handleGenerate} disabled={genLoading} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors">
-                                {genLoading ? "Generating..." : "Generate & Save"}
+                            <button onClick={handleGenerate} disabled={genLoading} className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 rounded-xl font-bold hover:shadow-lg disabled:opacity-50 transition-all transform hover:-translate-y-1">
+                                {genLoading ? "🤖 AI Generating..." : "Generate & Save"}
                             </button>
                         </div>
                     </div>
 
-                    <div className="lg:col-span-2 bg-gray-50 dark:bg-gray-800 p-6 rounded-xl shadow-inner border dark:border-gray-700 min-h-[500px]">
+                    <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border dark:border-gray-700 min-h-[500px]">
                         {!generatedTest ? (
-                            <div className="h-full flex flex-col items-center justify-center text-gray-400"><p>Generated preview will appear here</p></div>
+                            <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-60">
+                                <div className="text-6xl mb-4">📄</div>
+                                <p className="font-medium">AI-Generated Assessment Preview</p>
+                            </div>
                         ) : (
                             <div>
-                                <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-lg text-gray-800 dark:text-gray-100">{generatedTest.role}</h3><span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">SAVED</span></div>
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-bold text-xl text-gray-800 dark:text-gray-100">{generatedTest.role}</h3>
+                                    <span className="bg-green-100 text-green-700 px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-1">✅ SAVED</span>
+                                </div>
                                 <div className="space-y-4">{generatedTest.questions.map((q, idx) => (
-                                    <div key={idx} className="p-4 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-sm">
-                                        <p className="text-gray-800 dark:text-gray-200 text-sm font-medium">{q.text}</p>
+                                    <div key={idx} className="p-5 bg-gray-50 dark:bg-gray-700 border border-gray-100 dark:border-gray-600 rounded-xl">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="text-xs font-bold text-purple-600 uppercase">Question {idx + 1}</span>
+                                            <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded">{q.difficulty || 'Medium'}</span>
+                                        </div>
+                                        <p className="text-gray-800 dark:text-gray-200 font-medium">{q.text}</p>
                                     </div>
                                 ))}</div>
                             </div>
@@ -192,75 +249,117 @@ function AdminDashboard() {
 
             {/* TAB CONTENT: ANALYTICS */}
             {activeTab === 'analytics' && (
-                <div className="max-w-7xl mx-auto">
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow border dark:border-gray-700 mb-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Filter by University</label>
-                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                    placeholder="e.g. Harvard" value={filters.university} onChange={e => setFilters({ ...filters, university: e.target.value })} />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Search Candidate</label>
-                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                    placeholder="Name or Email..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} />
-                            </div>
-                            <div className="flex items-end">
-                                <div className="bg-purple-100 text-purple-800 px-4 py-2 rounded-lg font-bold w-full text-center">
-                                    Total Candidates: {filteredCandidates.length}
-                                </div>
-                            </div>
+                <div className="max-w-7xl mx-auto space-y-6">
+                    {/* Top Stats Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <h3 className="text-gray-500 text-xs font-bold uppercase">Total Candidates</h3>
+                            <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{totalC}</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <h3 className="text-gray-500 text-xs font-bold uppercase">Qualified</h3>
+                            <p className="text-3xl font-bold text-green-600 mt-1">{qualifiedC}</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <h3 className="text-gray-500 text-xs font-bold uppercase">Pass Rate</h3>
+                            <p className="text-3xl font-bold text-blue-600 mt-1">{passRate}%</p>
+                        </div>
+                        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-6 rounded-2xl shadow-lg text-white">
+                            <h3 className="text-purple-200 text-xs font-bold uppercase">Actions</h3>
+                            <button disabled={activeCompare.length < 2} onClick={runComparison} className="mt-2 w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg text-sm font-bold disabled:opacity-50 transition-all">
+                                {compareLoading ? "Analyzing..." : `Compare (${activeCompare.length})`}
+                            </button>
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-gray-800 rounded-xl shadow overflow-hidden border dark:border-gray-700">
+                    {/* Comparison Result Section */}
+                    {compareResult && (
+                        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-100 dark:border-purple-900 border-l-4 border-l-purple-500">
+                            <div className="flex justify-between items-start mb-4">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">🤖 AI Comparative Analysis</h3>
+                                <button onClick={() => setCompareResult(null)} className="text-gray-400 hover:text-gray-600">&times;</button>
+                            </div>
+                            <div className="prose dark:prose-invert max-w-none text-gray-600 dark:text-gray-300 whitespace-pre-line">
+                                {compareResult}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Filters & Table */}
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row gap-4 justify-between items-end">
+                            <div className="flex gap-4 w-full md:w-auto">
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">University</label>
+                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                                        placeholder="Filter..." value={filters.university} onChange={e => setFilters({ ...filters, university: e.target.value })} />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Search</label>
+                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                                        placeholder="Name..." value={filters.search} onChange={e => setFilters({ ...filters, search: e.target.value })} />
+                                </div>
+                            </div>
+                        </div>
+
                         <table className="w-full text-left">
-                            <thead className="bg-gray-50 dark:bg-gray-900 border-b dark:border-gray-700">
+                            <thead className="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-700">
                                 <tr>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Candidate</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Role</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Stage</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">ATS Score</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Final Score</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider w-10">Select</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">Candidate</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">Role</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">ATS Score</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">Skill Score</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th className="p-6 text-xs font-bold text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                                 {filteredCandidates.map(c => (
-                                    <tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                                        <td className="p-4">
-                                            <div className="font-bold text-gray-900 dark:text-gray-100">{c.name}</div>
-                                            <div className="text-xs text-gray-500">{c.email}</div>
-                                            <div className="text-xs text-gray-400">{c.university}</div>
+                                    <tr key={c.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${activeCompare.includes(c.id) ? 'bg-purple-50 dark:bg-purple-900/20' : ''}`}>
+                                        <td className="p-6">
+                                            <input type="checkbox"
+                                                checked={activeCompare.includes(c.id)}
+                                                onChange={() => toggleCompare(c.id)}
+                                                className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" />
                                         </td>
-                                        <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{c.role}</td>
-                                        <td className="p-4 text-sm font-mono">{c.current_stage}</td>
-                                        <td className="p-4 font-mono font-bold text-blue-600 dark:text-blue-400">{c.ats_score}</td>
-                                        <td className="p-4 font-mono font-bold text-purple-600 dark:text-purple-400">{c.final_score}</td>
-                                        <td className="p-4">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${c.status === 'Completed' ? 'bg-green-100 text-green-700' :
-                                                    c.status === 'Disqualified' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                        <td className="p-6">
+                                            <div className="font-bold text-gray-900 dark:text-white">{c.name}</div>
+                                            <div className="text-xs text-gray-500">{c.university}</div>
+                                        </td>
+                                        <td className="p-6 text-sm text-gray-600 dark:text-gray-300">{c.role}</td>
+                                        <td className="p-6">
+                                            <div className="text-sm font-bold text-gray-700 dark:text-gray-300">{c.ats_score}</div>
+                                            <div className="text-[10px] text-gray-400 uppercase">Pedigree</div>
+                                        </td>
+                                        <td className="p-6">
+                                            <div className="text-lg font-bold text-purple-600">{c.final_score}</div>
+                                            {c.final_score !== 'N/A' && <div className="w-16 h-1 bg-gray-200 rounded-full mt-1"><div className="h-1 bg-purple-500 rounded-full" style={{ width: `${c.final_score}%` }}></div></div>}
+                                        </td>
+                                        <td className="p-6">
+                                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${c.status === 'Qualified' ? 'bg-green-100 text-green-700' :
+                                                c.status === 'Rejected' || c.status === 'Disqualified' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
                                                 }`}>
                                                 {c.status}
                                             </span>
                                         </td>
-                                        <td className="p-4">
+                                        <td className="p-6">
                                             <button
                                                 onClick={() => setSelectedCandidate(c)}
-                                                className="text-xs bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 py-1 rounded transition-colors"
+                                                className="text-xs border border-gray-300 hover:border-gray-800 text-gray-700 dark:text-gray-300 px-3 py-1 rounded transition-colors"
                                             >
-                                                View Details
+                                                View
                                             </button>
                                         </td>
                                     </tr>
                                 ))}
                                 {filteredCandidates.length === 0 && (
-                                    <tr><td colSpan="7" className="p-8 text-center text-gray-400">No candidates found</td></tr>
+                                    <tr><td colSpan="7" className="p-12 text-center text-gray-400">No candidates found</td></tr>
                                 )}
                             </tbody>
                         </table>
                     </div>
+
 
                     {/* Candidate Details Modal */}
                     {selectedCandidate && (

@@ -764,6 +764,44 @@ def evaluate_stage_answers(request: schemas.StageEvaluationRequest):
     result = resume_parser.evaluate_answers(request.questions, request.answers)
     return result
 
+@app.post("/admin/compare-candidates")
+def compare_candidates(request: schemas.ComparisonRequest, db: Session = Depends(get_db)):
+    if not request.items or len(request.items) < 2:
+        return {"comparison": "Please select at least 2 candidates to compare."}
+    
+    # Fetch Candidates
+    candidates = db.query(models.Candidate).filter(models.Candidate.id.in_(request.items)).all()
+    
+    if not candidates:
+        return {"comparison": "Candidates not found."}
+        
+    prompt = "Compare these candidates for a Software Engineering role. Highlight strengths, weaknesses, and best fit.\n\n"
+    
+    for c in candidates:
+        # Get latest app
+        app = db.query(models.Application).filter(models.Application.candidate_id == c.id).order_by(models.Application.id.desc()).first()
+        if not app: continue
+        
+        scores = app.stage_scores or {}
+        resume_score = scores.get('resume', {}).get('score', 0)
+        final_score = scores.get('final', {}).get('score', 0)
+        
+        prompt += f"""
+        Candidate: {c.name} ({c.university})
+        Role: {app.assessment.role_title if app.assessment else 'N/A'}
+        Resume Score (Pedigree): {resume_score}/100
+        Technical/Final Score: {final_score}/100
+        Status: {app.status}
+        Detailed Scores: {scores.get('final', {}).get('breakdown', 'N/A')}
+        --------------------------
+        """
+        
+    prompt += "\nProvide a concise comparative summary in 3 paragraphs: 1) Technical Comparison, 2) Soft Skills/Pedigree, 3) Final Recommendation."
+    
+    analysis = resume_parser.safe_generate(prompt)
+    return {"comparison": analysis}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
