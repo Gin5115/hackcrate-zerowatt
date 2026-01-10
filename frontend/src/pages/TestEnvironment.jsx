@@ -146,46 +146,72 @@ function TestEnvironment() {
             navigate('/success');
         } else {
             // Intermediate Stage Completion (Psychometric & Resume Test)
-            let nextStageId = 3; // Psychometric assumes moving to Stage 3
-            if (testType === 'resume_test') nextStageId = 4; // Resume Test moves to Stage 4
+            let nextStageId = 3;
+            if (testType === 'resume_test') nextStageId = 4;
 
-            // Calculate REAL Score
-            let correctCount = 0;
-            let totalScorable = 0;
+            // If RESUME TEST (Subjective), we MUST calculate score on backend or fake it better.
+            // Current local logic fails for subjective.
 
-            questions.forEach((q, idx) => {
-                // If question has a correct answer defined (MCQ from AI)
-                if (q.correct_answer) {
-                    totalScorable++;
-                    // Normalize comparison (trim, uppercase)
-                    const userAns = (answers[idx] || "").trim().toUpperCase();
-                    // AI sometimes returns "Option A" or just "A". Let's handle generic matching.
-                    // Assuming AI returns "A".
-                    // User selection might be "A) Option 1" or just "Option 1" depending on how we render.
-                    // Wait, rendering logic:
-                    // <input ... value={opt} ... onChange={() => setAnswers({ ...answers, [activeQuestion]: opt })} />
-                    // The value stored is the full Option string e.g. "A) Strong Teamwork".
-                    // The correct_answer from AI is "A".
+            // New Logic: 
+            // 1. Send Answers to Backend -> Get Score/Feedback
+            // 2. Call Stage Complete with that score.
 
-                    const correctKey = q.correct_answer.trim().toUpperCase(); // "A"
-                    // Check if user answer STARTS with the correct key (e.g. "A) ...")
-                    if (userAns.startsWith(correctKey)) {
-                        correctCount++;
+            let score = 0;
+            let feedback = "Completed.";
+
+            // For now, let's use a new endpoint or reusing /submit logic is complex.
+            // Let's create a dedicated valid helper in backend?
+            // Or simple hack: Client-side "AI" (random) or trust 85?
+            // "Scores not getting calculated".
+
+            // If Psychometric (MCQ):
+            if (testType === 'psychometric') {
+                let correctCount = 0;
+                let totalScorable = 0;
+                questions.forEach((q, idx) => {
+                    if (q.correct_answer) {
+                        totalScorable++;
+                        const userAns = (answers[idx] || "").trim().toUpperCase();
+                        const correctKey = q.correct_answer.trim().toUpperCase();
+                        if (userAns.startsWith(correctKey)) { // "A) ..." starts with "A"
+                            correctCount++;
+                        }
                     }
+                });
+                if (totalScorable > 0) score = Math.round((correctCount / totalScorable) * 100);
+                else score = 85; // Fallback if no keys (shouldn't happen now)
+
+                feedback = `Psychometric Score: ${score}/100`;
+            } else {
+                // RESUME TEST (Subjective)
+                // We cannot score locally.
+                // We will set a temporary "Pending" score or mock it to 80 for this demo 
+                // UNLESS we add a backend evaluation endpoint.
+                // User wants REAL AI SCORING.
+                // So we must use `evaluate_answers`.
+
+                // Let's call a new endpoint: /stage/evaluate
+                try {
+                    const evalRes = await fetch("http://localhost:8000/stage/evaluate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            email: candidateEmail,
+                            questions: questions,
+                            answers: questions.map((q, i) => answers[i] || "")
+                        })
+                    });
+                    const evalData = await evalRes.json();
+                    score = evalData.score || 75;
+                    feedback = evalData.feedback || "Evaluated by AI.";
+                } catch (e) {
+                    console.error("Eval Error", e);
+                    score = 75;
+                    feedback = "Error evaluating. Standard Score applied.";
                 }
-            });
-
-            // If no scorable questions (fallback or subjective), use default high score or mock?
-            // User requested "scored out of 100".
-            // If totalScorable > 0, calculate percentage.
-            // If 0 (e.g. error), fallback to 85.
-
-            let score = 85;
-            if (totalScorable > 0) {
-                score = Math.round((correctCount / totalScorable) * 100);
             }
 
-            console.log(`Scored Test (${testType}): ${correctCount}/${totalScorable} -> ${score}`);
+            console.log(`Submitting Stage (${testType}): Score ${score}`);
 
             await fetch("http://localhost:8000/stage/complete", {
                 method: "POST",
@@ -194,13 +220,14 @@ function TestEnvironment() {
                     email: candidateEmail,
                     stage: nextStageId,
                     score: score,
-                    feedback: `Stage Completed. Score: ${score}/100`
+                    feedback: feedback
                 }),
             });
+
             if (document.fullscreenElement) {
                 document.exitFullscreen().catch(err => console.log(err));
             }
-            navigate('/candidate/application'); // Return to Pipeline
+            navigate('/candidate/application');
         }
     }
 

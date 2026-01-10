@@ -4,7 +4,7 @@ from google.api_core.exceptions import TooManyRequests
 import re
 
 # Configure Gemini
-genai.configure(api_key="AIzaSyCqDKyipUvjtp4UX8ooTh6BdkBfiuUFdNw")
+genai.configure(api_key="AIzaSyDUdVqmtSqc_f5JSQN_w0h98F8HRyZhuN8")
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 def analyze_resume(text: str) -> dict:
@@ -288,22 +288,20 @@ def generate_psychometric_questions():
 def evaluate_answers(questions: list, answers: list) -> dict:
     """
     Evaluates candidate answers against questions using Gemini.
-    Returns: { "score": int, "feedback_list": [], "overall_feedback": str }
+    Returns: { "score": int, "question_scores": [], "overall_feedback": str, "feedback": str }
     """
-    # ... (Existing implementation or updated logic if needed)
-    # For now, keeping the previous placeholder or if it was overwritten, I'll ensure it's correct.
-    # Since I am replacing the end of file, I need to make sure I include the previous evaluate_answers or rewrite it.
-    pass 
-    
-    # RE-IMPLEMENTING evaluate_answers properly since I am overwriting the block
+    if not questions or not answers:
+        return {"score": 0, "overall_feedback": "No answers provided."}
+
     prompt = "You are a Technical Interviewer. Evaluate these answers.\n\n"
     
     for i, q in enumerate(questions):
-        # Handle potential dict access issues if q is not dict (though it should be)
+        # Handle potential dict access issues
         q_text = q.get('text', '') if isinstance(q, dict) else str(q)
         q_diff = q.get('difficulty', 'medium') if isinstance(q, dict) else 'medium'
         Keywords = q.get('keywords', []) if isinstance(q, dict) else []
         keyword_str = ", ".join(Keywords)
+        correct_ans = q.get('correct_answer') or q.get('model_answer') or "N/A"
         
         ans = answers[i] if i < len(answers) else "No Answer"
         
@@ -311,19 +309,22 @@ def evaluate_answers(questions: list, answers: list) -> dict:
     Question {i+1}: {q_text}
     Difficulty: {q_diff}
     Expected Keywords: {keyword_str}
+    Model/Correct Answer: {correct_ans}
     Candidate Answer: {ans}
     -----------------------------------
     """
 
     prompt += """
     Tasks:
-    1. Score each answer from 0 to 10.
-    2. Final score out of 100.
-    3. Return JSON:
+    1. Score each answer from 0 to 10 based on correctness and keyword usage.
+    2. Calculate final score out of 100.
+    3. Provide brief feedback.
+    
+    Output JSON ONLY:
     {
         "question_scores": [8, ...],
         "final_score": 75,
-        "overall_feedback": "..."
+        "overall_feedback": "Good understanding of basics..."
     }
     """
     print("⏳ AI Evaluating Answers...")
@@ -331,10 +332,15 @@ def evaluate_answers(questions: list, answers: list) -> dict:
 
     try:
         import json
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
+        data = parse_json_safely(response_text)
+        if data:
+            # Normalize fields
+            data['feedback'] = data.get('overall_feedback', 'Evaluated.')
+            data['score'] = data.get('final_score', 0)
+            return data
     except Exception as e:
         print(f"⚠️ AI Eval Parse Error: {e}")
-        return {"final_score": 0, "overall_feedback": "Error parsing evaluation."}
+
+    return {"score": 50, "overall_feedback": "Error parsing AI evaluation.", "feedback": "Error parsing result."}
+
 

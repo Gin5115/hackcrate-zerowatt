@@ -521,7 +521,7 @@ async def upload_resume(
     application.resume_text = resume_text
     
     # Update Scores
-    stage_scores = application.stage_scores or {}
+    stage_scores = dict(application.stage_scores) if application.stage_scores else {}
     stage_scores['resume'] = result
     application.stage_scores = stage_scores
 
@@ -529,17 +529,13 @@ async def upload_resume(
         application.current_stage = 2
         application.status = "Incomplete" # Still incomplete until all stages done
     else:
-        # If score < 70, we can either reject or let them pass with low score.
-        # User said "anything above 70 is a pass".
-        # Let's Mark as Rejected for now to be strict, or just let them continue?
-        # "Strict" implies failing.
-        # But let's set current_stage = 2 anyway but status might reflect low score?
-        # Actually, let's auto-reject?
-        # "anything above 70 is a pass" implies < 70 is fail.
-        # However, for hackathon flow, maybe warn?
-        # Let's go VALIDATION mode: If < 70, status="Rejected", current_stage=-1.
+        # STRICT RULE: < 10 Disqualifies
         application.current_stage = -1
         application.status = "Rejected"
+        
+        # Add rejection feedback
+        stage_scores['resume']['feedback'] += " (Does not meet minimum 10% threshold)"
+        application.stage_scores = stage_scores
         
     db.commit()
     return {"message": "Resume Processed", "result": result}
@@ -731,13 +727,41 @@ def complete_stage(update: schemas.StageUpdate, db: Session = Depends(get_db)):
     application.current_stage = update.stage
     
     # Update scores
-    current_scores = application.stage_scores or {}
+    # FORCE NEW DICT REFERENCE for SQLAlchemy change tracking
+    current_scores = dict(application.stage_scores) if application.stage_scores else {}
+    
     stage_key = f"stage_{update.stage-1}" # Score for previous stage
+    
+    # If score is 0 and we have answers (e.g. from Subjective Test), Trigger Server-Side Scoring if needed?
+    # Actually, the Frontend should probably call a "evaluate" endpoint first?
+    # OR we handle it here if we passed answers.
+    # But schema `StageUpdate` only has score/feedback.
+    # We should trust valid scores, but if it's 0/85 fallback, maybe re-evaluate?
+    # For now, let's just save.
+    # The real fix is in Frontend to call `evaluate_answers` via a new endpoint or update `StageUpdate` schema.
+    
+    # Wait! Frontend handles submission.
+    # The user issue is "Score 0".
+    # This means Frontend sent 0.
+    
     current_scores[stage_key] = {"score": update.score, "feedback": update.feedback}
     application.stage_scores = current_scores
     
+    # NEW RULE: If score < 50, STOP application immediately.
+    if update.score < 50:
+        application.current_stage = -1
+        application.status = "Rejected"
+        current_scores[stage_key]['feedback'] += " (Failed: Score < 50)"
+        application.stage_scores = current_scores
+    
     db.commit()
     return {"status": "updated", "stage": application.current_stage}
+
+@app.post("/stage/evaluate")
+def evaluate_stage_answers(request: schemas.StageEvaluationRequest):
+    # Call Gemini to score
+    result = resume_parser.evaluate_answers(request.questions, request.answers)
+    return result
 
 if __name__ == "__main__":
     import uvicorn

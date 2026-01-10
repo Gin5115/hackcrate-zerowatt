@@ -127,7 +127,7 @@ function CandidateDashboard() {
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <div className="text-xs font-bold text-gray-500 uppercase">Feedback</div>
                         <div className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                            {status.stage_scores[`stage_${level}`]?.feedback || status.stage_scores['resume']?.feedback || "Completed"}
+                            {status.stage_scores[`stage_${level}`]?.feedback || (level === 1 ? status.stage_scores['resume']?.feedback : "Evaluation Completed.")}
                         </div>
                     </div>
                 )}

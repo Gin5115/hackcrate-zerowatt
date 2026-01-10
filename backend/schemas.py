@@ -59,3 +59,8 @@ class AssessmentResponse(BaseModel):
     role: str
     suggested_skills: List[str]
     questions: List[QuestionSchema]
+
+class StageEvaluationRequest(BaseModel):
+    email: str
+    questions: List[dict] # Full question objects
+    answers: List[str] # Candidate answers
